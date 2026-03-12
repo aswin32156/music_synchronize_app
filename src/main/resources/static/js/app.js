@@ -27,6 +27,8 @@ let currentSongIndex = -1;
 let progressInterval = null;
 let currentTime = 0;
 let duration = 0;
+let currentLyrics = null;
+let currentSongId = null;
 
 
 // Audio player
@@ -248,6 +250,9 @@ function updateNowPlaying(song, playbackState) {
         document.getElementById('now-playing-bg').style.backgroundImage = '';
         document.getElementById('sound-waves').classList.remove('active');
         stopProgressTimer();
+        currentSongId = null;
+        currentLyrics = null;
+        document.getElementById('lyrics-container').innerHTML = '<div class="lyrics-empty"><i class="fas fa-music"></i><p>Lyrics will appear here when a song is playing</p></div>';
         return;
     }
 
@@ -260,6 +265,12 @@ function updateNowPlaying(song, playbackState) {
 
     duration = song.durationSeconds || 0;
     document.getElementById('time-total').textContent = formatTime(duration);
+
+    // Load lyrics if song changed
+    if (song.id !== currentSongId) {
+        currentSongId = song.id;
+        loadLyrics(song.id);
+    }
 
     if (playbackState) {
         isPlaying = playbackState.playing;
@@ -516,6 +527,9 @@ function updateProgress() {
     const pct = audioDur > 0 ? (audioTime / audioDur) * 100 : 0;
     fill.style.width = pct + '%';
     timeCurrent.textContent = formatTime(Math.floor(audioTime));
+    
+    // Sync lyrics with playback
+    syncLyrics();
 }
 
 function updatePlayPauseIcon() {
@@ -762,6 +776,90 @@ function escapeHtml(text) {
 function escapeAttr(text) {
     if (!text) return '';
     return String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ===== Lyrics System =====
+async function loadLyrics(songId) {
+    const container = document.getElementById('lyrics-container');
+    currentLyrics = null;
+    
+    // Show loading
+    container.innerHTML = '<div class="lyrics-loading"><i class="fas fa-spinner fa-spin"></i> Loading lyrics...</div>';
+    
+    try {
+        const res = await fetch(`/api/lyrics/${encodeURIComponent(songId)}`);
+        
+        if (!res.ok) {
+            throw new Error('Lyrics not found');
+        }
+        
+        const lyrics = await res.json();
+        currentLyrics = lyrics;
+        
+        displayLyrics(lyrics);
+    } catch (e) {
+        // No lyrics found
+        container.innerHTML = `
+            <div class="lyrics-not-found">
+                <i class="fas fa-search"></i>
+                <p>Lyrics not available for this song</p>
+            </div>
+        `;
+    }
+}
+
+function displayLyrics(lyrics) {
+    const container = document.getElementById('lyrics-container');
+    
+    if (!lyrics) {
+        container.innerHTML = '<div class="lyrics-empty"><i class="fas fa-music"></i><p>Lyrics will appear here when a song is playing</p></div>';
+        return;
+    }
+    
+    // If we have synced lyrics (LRC format with timestamps)
+    if (lyrics.lines && lyrics.lines.length > 0) {
+        container.innerHTML = lyrics.lines.map((line, idx) => 
+            `<div class="lyric-line" data-time="${line.time}" data-index="${idx}">${escapeHtml(line.text)}</div>`
+        ).join('');
+    } 
+    // Otherwise display plain lyrics
+    else if (lyrics.plainLyrics) {
+        container.innerHTML = `<div class="lyrics-plain">${escapeHtml(lyrics.plainLyrics)}</div>`;
+    } 
+    else {
+        container.innerHTML = '<div class="lyrics-not-found"><i class="fas fa-search"></i><p>Lyrics not available</p></div>';
+    }
+}
+
+function syncLyrics() {
+    if (!currentLyrics || !currentLyrics.lines || currentLyrics.lines.length === 0) {
+        return;
+    }
+    
+    const lines = document.querySelectorAll('.lyric-line');
+    if (lines.length === 0) return;
+    
+    let activeIndex = -1;
+    
+    // Find the current active line based on currentTime
+    for (let i = currentLyrics.lines.length - 1; i >= 0; i--) {
+        if (currentTime >= currentLyrics.lines[i].time) {
+            activeIndex = i;
+            break;
+        }
+    }
+    
+    // Update classes
+    lines.forEach((line, idx) => {
+        line.classList.remove('active', 'past');
+        if (idx === activeIndex) {
+            line.classList.add('active');
+            // Auto-scroll to active line
+            line.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else if (idx < activeIndex) {
+            line.classList.add('past');
+        }
+    });
 }
 
 // ===== Expose functions to global scope for onclick handlers =====

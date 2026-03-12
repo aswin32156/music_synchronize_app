@@ -15,8 +15,10 @@ import org.springframework.web.bind.annotation.RestController;
 import com.musicsync.dto.CreateRoomRequest;
 import com.musicsync.dto.JoinRoomRequest;
 import com.musicsync.dto.RoomState;
+import com.musicsync.model.Lyrics;
 import com.musicsync.model.Room;
 import com.musicsync.model.Song;
+import com.musicsync.service.LyricsService;
 import com.musicsync.service.MusicService;
 import com.musicsync.service.RoomService;
 
@@ -26,10 +28,12 @@ public class RoomController {
 
     private final RoomService roomService;
     private final MusicService musicService;
+    private final LyricsService lyricsService;
 
-    public RoomController(RoomService roomService, MusicService musicService) {
+    public RoomController(RoomService roomService, MusicService musicService, LyricsService lyricsService) {
         this.roomService = roomService;
         this.musicService = musicService;
+        this.lyricsService = lyricsService;
     }
 
     @PostMapping("/rooms/create")
@@ -112,5 +116,20 @@ public class RoomController {
     @GetMapping("/stats")
     public ResponseEntity<?> getStats() {
         return ResponseEntity.ok(Map.of("activeRooms", roomService.getActiveRoomCount()));
+    }
+
+    @GetMapping("/lyrics/{songId}")
+    public ResponseEntity<?> getLyrics(@PathVariable String songId) {
+        Song song = musicService.getSongById(songId);
+        if (song == null) {
+            return ResponseEntity.status(404).body(Map.of("error", "Song not found"));
+        }
+        
+        Lyrics lyrics = lyricsService.getLyrics(song);
+        if (lyrics == null) {
+            return ResponseEntity.status(404).body(Map.of("error", "Lyrics not found"));
+        }
+        
+        return ResponseEntity.ok(lyrics);
     }
 }
