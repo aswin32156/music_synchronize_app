@@ -278,8 +278,15 @@ public class WebSocketController {
         Room room = roomService.getRoom(roomCode);
         if (room == null) return;
 
+        PlaybackState ps = room.getPlaybackState();
+        PlaybackState psCopy = new PlaybackState();
+        psCopy.setPlaying(ps.isPlaying());
+        psCopy.setCurrentTime(ps.getEstimatedCurrentTime());
+        psCopy.setLastUpdated(ps.getLastUpdated());
+        psCopy.setCurrentSongIndex(ps.getCurrentSongIndex());
+
         Map<String, Object> playbackUpdate = Map.of(
-            "playbackState", room.getPlaybackState(),
+            "playbackState", psCopy,
             "currentSong", room.getCurrentSong() != null ? room.getCurrentSong() : Map.of(),
             "queueSize", room.getQueue().size()
         );

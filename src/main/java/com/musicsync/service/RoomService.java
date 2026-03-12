@@ -129,7 +129,16 @@ public class RoomService {
         state.setUsers(new ArrayList<>(room.getUsers()));
         state.setQueue(new ArrayList<>(room.getQueue()));
         state.setCurrentSong(room.getCurrentSong());
-        state.setPlaybackState(room.getPlaybackState());
+
+        // Send estimated current time so clients don't reset playback
+        PlaybackState ps = room.getPlaybackState();
+        PlaybackState psCopy = new PlaybackState();
+        psCopy.setPlaying(ps.isPlaying());
+        psCopy.setCurrentTime(ps.getEstimatedCurrentTime());
+        psCopy.setLastUpdated(ps.getLastUpdated());
+        psCopy.setCurrentSongIndex(ps.getCurrentSongIndex());
+        state.setPlaybackState(psCopy);
+
         state.setChatHistory(new ArrayList<>(room.getChatHistory()));
         return state;
     }

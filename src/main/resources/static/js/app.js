@@ -874,30 +874,48 @@ function handlePlaybackUpdate(data) {
     }
 
     if (ps) {
-        isPlaying = ps.playing;
-        currentTime = ps.currentTime || 0;
         currentSongIndex = ps.currentSongIndex;
         updatePlayPauseIcon();
 
-        // Sync audio playback
-        if (Math.abs(audioPlayer.currentTime - currentTime) > 2) {
-            audioPlayer.currentTime = currentTime;
-        }
+        // Only reload audio and seek if song actually changed
+        if (song && song.audioUrl && audioPlayer.getAttribute('data-song-id') !== song.id) {
+            isPlaying = ps.playing;
+            currentTime = ps.currentTime || 0;
+            audioPlayer.setAttribute('data-song-id', song.id);
+            audioPlayer.src = song.audioUrl;
+            audioPlayer.load();
 
-        if (isPlaying) {
-            const playPromise = audioPlayer.play();
-            if (playPromise !== undefined) {
-                playPromise.catch((err) => {
-                    console.error('Failed to sync audio playback:', err);
-                    setTimeout(() => audioPlayer.play().catch(() => {}), 300);
-                });
+            if (currentTime > 0) {
+                audioPlayer.currentTime = currentTime;
             }
-            startProgressTimer();
-            document.getElementById('sound-waves').classList.add('active');
+
+            if (isPlaying) {
+                const playPromise = audioPlayer.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch((err) => {
+                        console.error('Failed to sync audio playback:', err);
+                        setTimeout(() => audioPlayer.play().catch(() => {}), 300);
+                    });
+                }
+                startProgressTimer();
+                document.getElementById('sound-waves').classList.add('active');
+            } else {
+                audioPlayer.pause();
+                stopProgressTimer();
+                document.getElementById('sound-waves').classList.remove('active');
+            }
         } else {
-            audioPlayer.pause();
-            stopProgressTimer();
-            document.getElementById('sound-waves').classList.remove('active');
+            // Same song — only sync play/pause state, don't touch position
+            if (ps.playing && audioPlayer.paused) {
+                audioPlayer.play().catch(() => {});
+                startProgressTimer();
+                document.getElementById('sound-waves').classList.add('active');
+            } else if (!ps.playing && !audioPlayer.paused) {
+                audioPlayer.pause();
+                stopProgressTimer();
+                document.getElementById('sound-waves').classList.remove('active');
+            }
+            isPlaying = ps.playing;
         }
 
         updateProgress();
