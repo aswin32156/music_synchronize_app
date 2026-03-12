@@ -416,8 +416,14 @@ function updateQueue(queue, playbackState) {
 
     queueEmpty.classList.add('hidden');
     queueList.innerHTML = queue.map((song, index) => `
-        <div class="song-item ${index === currentIdx ? 'playing' : ''}"
+        <div class="song-item ${index === currentIdx ? 'playing' : ''}" draggable="true"
+             data-index="${index}" data-song-id="${escapeAttr(song.id)}"
+             ondragstart="onQueueDragStart(event)" ondragover="onQueueDragOver(event)"
+             ondrop="onQueueDrop(event)" ondragend="onQueueDragEnd(event)"
              onclick="playSongAtIndex(${index})">
+            <span class="song-item-drag" title="Drag to reorder" onclick="event.stopPropagation()">
+                <i class="fas fa-grip-vertical"></i>
+            </span>
             <span class="song-item-index">
                 ${index === currentIdx && isPlaying
                     ? '<i class="fas fa-volume-up" style="color: var(--accent); font-size: 12px;"></i>'
@@ -430,8 +436,74 @@ function updateQueue(queue, playbackState) {
             </div>
             ${song.addedBy ? `<span class="song-item-added">Added by ${escapeHtml(song.addedBy)}</span>` : ''}
             <span class="song-item-duration">${formatTime(song.durationSeconds)}</span>
+            <button class="song-item-action remove" title="Remove from queue"
+                    onclick="event.stopPropagation(); removeFromQueue('${escapeAttr(song.id)}')">
+                <i class="fas fa-times"></i>
+            </button>
         </div>
     `).join('');
+}
+
+// ===== Queue Drag & Drop =====
+let dragSrcIndex = null;
+
+function onQueueDragStart(e) {
+    dragSrcIndex = parseInt(e.currentTarget.dataset.index);
+    e.currentTarget.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragSrcIndex);
+}
+
+function onQueueDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const item = e.currentTarget;
+    const rect = item.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    item.classList.remove('drag-over-top', 'drag-over-bottom');
+    if (e.clientY < midY) {
+        item.classList.add('drag-over-top');
+    } else {
+        item.classList.add('drag-over-bottom');
+    }
+}
+
+function onQueueDrop(e) {
+    e.preventDefault();
+    const toIndex = parseInt(e.currentTarget.dataset.index);
+    e.currentTarget.classList.remove('drag-over-top', 'drag-over-bottom');
+    if (dragSrcIndex !== null && dragSrcIndex !== toIndex) {
+        reorderQueue(dragSrcIndex, toIndex);
+    }
+    dragSrcIndex = null;
+}
+
+function onQueueDragEnd(e) {
+    e.currentTarget.classList.remove('dragging');
+    document.querySelectorAll('.song-item').forEach(el => {
+        el.classList.remove('drag-over-top', 'drag-over-bottom');
+    });
+    dragSrcIndex = null;
+}
+
+function reorderQueue(fromIndex, toIndex) {
+    waitForConnection(() => {
+        stompClient.send('/app/room.queue.reorder', {}, JSON.stringify({
+            roomCode: currentRoom.roomCode,
+            fromIndex: fromIndex,
+            toIndex: toIndex
+        }));
+    });
+}
+
+function removeFromQueue(songId) {
+    waitForConnection(() => {
+        stompClient.send('/app/room.queue.remove', {}, JSON.stringify({
+            roomCode: currentRoom.roomCode,
+            songId: songId
+        }));
+    });
+    showToast('Song removed from queue', 'success');
 }
 
 // ===== External Search (JioSaavn + Spotify) =====
@@ -979,6 +1051,12 @@ window.switchTab = switchTab;
 window.searchExternal = searchExternal;
 window.quickSearch = quickSearch;
 window.addToQueue = addToQueue;
+window.removeFromQueue = removeFromQueue;
+window.reorderQueue = reorderQueue;
+window.onQueueDragStart = onQueueDragStart;
+window.onQueueDragOver = onQueueDragOver;
+window.onQueueDrop = onQueueDrop;
+window.onQueueDragEnd = onQueueDragEnd;
 window.copyRoomCode = copyRoomCode;
 console.log('All functions exposed to window object');
 

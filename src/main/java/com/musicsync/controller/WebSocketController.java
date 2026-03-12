@@ -1,5 +1,6 @@
 package com.musicsync.controller;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -152,8 +153,68 @@ public class WebSocketController {
         Room room = roomService.getRoom(roomCode);
         if (room == null) return;
 
+        int removedIndex = -1;
+        List<Song> q = room.getQueue();
+        for (int i = 0; i < q.size(); i++) {
+            if (q.get(i).getId().equals(request.getSongId())) {
+                removedIndex = i;
+                break;
+            }
+        }
+
         room.removeSongFromQueue(request.getSongId());
+
+        // Adjust currentSongIndex if needed
+        if (removedIndex >= 0) {
+            PlaybackState state = room.getPlaybackState();
+            int currentIdx = state.getCurrentSongIndex();
+            if (removedIndex < currentIdx) {
+                state.setCurrentSongIndex(currentIdx - 1);
+            } else if (removedIndex == currentIdx) {
+                // Current song removed - stop or play next
+                if (currentIdx >= room.getQueue().size()) {
+                    state.setCurrentSongIndex(Math.max(0, room.getQueue().size() - 1));
+                }
+                if (room.getQueue().isEmpty()) {
+                    state.setPlaying(false);
+                    state.setCurrentTime(0);
+                    state.setCurrentSongIndex(0);
+                } else {
+                    state.setCurrentTime(0);
+                    state.setPlaying(true);
+                }
+            }
+        }
+
         broadcastRoomState(roomCode);
+        broadcastPlaybackState(roomCode);
+    }
+
+    @MessageMapping("/room.queue.reorder")
+    public void reorderQueue(@Payload Map<String, Object> payload) {
+        String roomCode = (String) payload.get("roomCode");
+        int fromIndex = ((Number) payload.get("fromIndex")).intValue();
+        int toIndex = ((Number) payload.get("toIndex")).intValue();
+
+        Room room = roomService.getRoom(roomCode);
+        if (room == null) return;
+
+        // Adjust currentSongIndex to follow the currently playing song
+        PlaybackState state = room.getPlaybackState();
+        int currentIdx = state.getCurrentSongIndex();
+
+        room.reorderQueue(fromIndex, toIndex);
+
+        if (currentIdx == fromIndex) {
+            state.setCurrentSongIndex(toIndex);
+        } else if (fromIndex < currentIdx && toIndex >= currentIdx) {
+            state.setCurrentSongIndex(currentIdx - 1);
+        } else if (fromIndex > currentIdx && toIndex <= currentIdx) {
+            state.setCurrentSongIndex(currentIdx + 1);
+        }
+
+        broadcastRoomState(roomCode);
+        broadcastPlaybackState(roomCode);
     }
 
     @MessageMapping("/room.chat")

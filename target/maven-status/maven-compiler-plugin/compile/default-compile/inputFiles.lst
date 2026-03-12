@@ -11,8 +11,6 @@ D:\Project\New folder\src\main\java\com\musicsync\model\PersistentUser.java
 D:\Project\New folder\src\main\java\com\musicsync\config\WebSocketConfig.java
 D:\Project\New folder\src\main\java\com\musicsync\MusicSyncApplication.java
 D:\Project\New folder\src\main\java\com\musicsync\model\Song.java
-D:\Project\New folder\src\main\java\com\musicsync\service\LyricsService.java
-D:\Project\New folder\src\main\java\com\musicsync\model\Lyrics.java
 D:\Project\New folder\src\main\java\com\musicsync\dto\ChatRequest.java
 D:\Project\New folder\src\main\java\com\musicsync\controller\RoomController.java
 D:\Project\New folder\src\main\java\com\musicsync\model\ChatMessage.java

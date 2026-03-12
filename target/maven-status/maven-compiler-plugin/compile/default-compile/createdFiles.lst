@@ -1,5 +1,4 @@
 com\musicsync\service\JioSaavnService.class
-com\musicsync\service\LyricsService.class
 com\musicsync\controller\WebSocketController.class
 com\musicsync\service\MusicService.class
 com\musicsync\config\CorsConfig.class
@@ -10,9 +9,7 @@ com\musicsync\dto\ChatRequest.class
 com\musicsync\dto\RoomState.class
 com\musicsync\controller\RoomController.class
 com\musicsync\dto\JoinRoomRequest.class
-com\musicsync\model\Lyrics.class
 com\musicsync\model\Song.class
-com\musicsync\model\Lyrics$LyricLine.class
 com\musicsync\dto\PlaybackCommand.class
 com\musicsync\model\ChatMessage.class
 com\musicsync\dto\CreateRoomRequest.class

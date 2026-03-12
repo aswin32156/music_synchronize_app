@@ -27,26 +27,107 @@ let currentSongIndex = -1;
 let progressInterval = null;
 let currentTime = 0;
 let duration = 0;
-let currentLyrics = null;
-let currentSongId = null;
+let connectionRetries = 0;
+let maxRetries = 5;
+let isConnecting = false;
+let pendingActions = [];
+
+function executePendingActions() {
+    while (pendingActions.length > 0) {
+        const action = pendingActions.shift();
+        try { action(); } catch(e) { console.error('Pending action error:', e); }
+    }
+}
+
+function waitForConnection(action) {
+    if (stompClient && stompClient.connected) {
+        action();
+    } else {
+        pendingActions.push(action);
+        if (currentRoom && currentRoom.roomCode && !isConnecting) {
+            connectWebSocket(currentRoom.roomCode);
+        }
+    }
+}
 
 
 // Audio player
 const audioPlayer = new Audio();
 audioPlayer.volume = 1.0;
+audioPlayer.crossOrigin = "anonymous"; // Enable CORS for external audio sources
+let audioUnlocked = false;
+
+// Unlock audio playback on user gesture (needed for browsers' autoplay policy)
+function unlockAudio() {
+    if (audioUnlocked) return;
+    audioPlayer.muted = true;
+    audioPlayer.play().then(() => {
+        audioPlayer.pause();
+        audioPlayer.muted = false;
+        audioPlayer.currentTime = 0;
+        audioUnlocked = true;
+        console.log('[Audio] Audio unlocked for autoplay');
+    }).catch(() => {
+        audioPlayer.muted = false;
+        console.warn('[Audio] Could not unlock audio');
+    });
+}
+
 audioPlayer.addEventListener('ended', () => {
     if (isHost) {
         nextSong();
     }
 });
+
 audioPlayer.addEventListener('timeupdate', () => {
     currentTime = audioPlayer.currentTime;
     duration = audioPlayer.duration || 0;
     updateProgress();
 });
+
 audioPlayer.addEventListener('loadedmetadata', () => {
     duration = audioPlayer.duration || 0;
     document.getElementById('time-total').textContent = formatTime(Math.floor(duration));
+});
+
+// Add error handling for audio playback
+audioPlayer.addEventListener('error', (e) => {
+    console.error('Audio playback error:', e);
+    const error = audioPlayer.error;
+    let errorMsg = 'Failed to play audio';
+    
+    if (error) {
+        switch (error.code) {
+            case error.MEDIA_ERR_ABORTED:
+                errorMsg = 'Audio playback was aborted';
+                break;
+            case error.MEDIA_ERR_NETWORK:
+                errorMsg = 'Network error while loading audio';
+                break;
+            case error.MEDIA_ERR_DECODE:
+                errorMsg = 'Audio format not supported';
+                break;
+            case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                errorMsg = 'Audio source not available';
+                break;
+        }
+    }
+    
+    console.error('Audio error details:', errorMsg);
+    showToast(errorMsg + '. Try skipping to next song.', 'error');
+    
+    // Auto-skip to next song if host
+    if (isHost) {
+        setTimeout(() => nextSong(), 2000);
+    }
+});
+
+audioPlayer.addEventListener('loadstart', () => {
+    console.log('Loading audio:', audioPlayer.src);
+});
+
+audioPlayer.addEventListener('canplay', () => {
+    console.log('Audio ready to play');
 });
 
 // Splash Screen - DISABLED, go directly to home
@@ -78,6 +159,8 @@ async function createRoom() {
         showFormError('create-error', 'Please enter your name');
         return;
     }
+
+    unlockAudio();
 
     const btn = document.getElementById('btn-create-room');
     btn.disabled = true;
@@ -130,6 +213,8 @@ async function joinRoom() {
         return;
     }
 
+    unlockAudio();
+
     const btn = document.getElementById('btn-join-room');
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Joining...';
@@ -167,9 +252,14 @@ async function joinRoom() {
 
 // ===== Room Logic =====
 function enterRoom(roomState) {
+    console.log('[Room] Entering room:', roomState);
     showScreen('room-screen');
     updateRoomUI(roomState);
+    
+    console.log('[Room] About to connect WebSocket with room code:', roomState.roomCode);
     connectWebSocket(roomState.roomCode);
+    
+    console.log('[Room] Checking sources...');
     checkSources();
 
     // Show/hide host controls
@@ -179,6 +269,7 @@ function enterRoom(roomState) {
     } else {
         hostIndicator.classList.remove('hidden');
     }
+    console.log('[Room] Room entry complete. isHost:', isHost);
 }
 
 function updateRoomUI(state) {
@@ -250,9 +341,6 @@ function updateNowPlaying(song, playbackState) {
         document.getElementById('now-playing-bg').style.backgroundImage = '';
         document.getElementById('sound-waves').classList.remove('active');
         stopProgressTimer();
-        currentSongId = null;
-        currentLyrics = null;
-        document.getElementById('lyrics-container').innerHTML = '<div class="lyrics-empty"><i class="fas fa-music"></i><p>Lyrics will appear here when a song is playing</p></div>';
         return;
     }
 
@@ -265,12 +353,6 @@ function updateNowPlaying(song, playbackState) {
 
     duration = song.durationSeconds || 0;
     document.getElementById('time-total').textContent = formatTime(duration);
-
-    // Load lyrics if song changed
-    if (song.id !== currentSongId) {
-        currentSongId = song.id;
-        loadLyrics(song.id);
-    }
 
     if (playbackState) {
         isPlaying = playbackState.playing;
@@ -291,7 +373,21 @@ function updateNowPlaying(song, playbackState) {
         }
 
         if (isPlaying) {
-            audioPlayer.play().catch(() => {});
+            const playPromise = audioPlayer.play();
+            if (playPromise !== undefined) {
+                playPromise.catch((err) => {
+                    console.error('Failed to play audio:', err);
+                    setTimeout(() => {
+                        audioPlayer.play().catch(() => {
+                            showToast('Click anywhere to enable audio playback.', 'info');
+                            document.addEventListener('click', function resumeAudio() {
+                                audioPlayer.play().catch(() => {});
+                                document.removeEventListener('click', resumeAudio);
+                            }, { once: true });
+                        });
+                    }, 300);
+                });
+            }
             startProgressTimer();
             document.getElementById('sound-waves').classList.add('active');
         } else {
@@ -320,8 +416,14 @@ function updateQueue(queue, playbackState) {
 
     queueEmpty.classList.add('hidden');
     queueList.innerHTML = queue.map((song, index) => `
-        <div class="song-item ${index === currentIdx ? 'playing' : ''}"
+        <div class="song-item ${index === currentIdx ? 'playing' : ''}" draggable="true"
+             data-index="${index}" data-song-id="${escapeAttr(song.id)}"
+             ondragstart="onQueueDragStart(event)" ondragover="onQueueDragOver(event)"
+             ondrop="onQueueDrop(event)" ondragend="onQueueDragEnd(event)"
              onclick="playSongAtIndex(${index})">
+            <span class="song-item-drag" title="Drag to reorder" onclick="event.stopPropagation()">
+                <i class="fas fa-grip-vertical"></i>
+            </span>
             <span class="song-item-index">
                 ${index === currentIdx && isPlaying
                     ? '<i class="fas fa-volume-up" style="color: var(--accent); font-size: 12px;"></i>'
@@ -334,8 +436,74 @@ function updateQueue(queue, playbackState) {
             </div>
             ${song.addedBy ? `<span class="song-item-added">Added by ${escapeHtml(song.addedBy)}</span>` : ''}
             <span class="song-item-duration">${formatTime(song.durationSeconds)}</span>
+            <button class="song-item-action remove" title="Remove from queue"
+                    onclick="event.stopPropagation(); removeFromQueue('${escapeAttr(song.id)}')">
+                <i class="fas fa-times"></i>
+            </button>
         </div>
     `).join('');
+}
+
+// ===== Queue Drag & Drop =====
+let dragSrcIndex = null;
+
+function onQueueDragStart(e) {
+    dragSrcIndex = parseInt(e.currentTarget.dataset.index);
+    e.currentTarget.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragSrcIndex);
+}
+
+function onQueueDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const item = e.currentTarget;
+    const rect = item.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    item.classList.remove('drag-over-top', 'drag-over-bottom');
+    if (e.clientY < midY) {
+        item.classList.add('drag-over-top');
+    } else {
+        item.classList.add('drag-over-bottom');
+    }
+}
+
+function onQueueDrop(e) {
+    e.preventDefault();
+    const toIndex = parseInt(e.currentTarget.dataset.index);
+    e.currentTarget.classList.remove('drag-over-top', 'drag-over-bottom');
+    if (dragSrcIndex !== null && dragSrcIndex !== toIndex) {
+        reorderQueue(dragSrcIndex, toIndex);
+    }
+    dragSrcIndex = null;
+}
+
+function onQueueDragEnd(e) {
+    e.currentTarget.classList.remove('dragging');
+    document.querySelectorAll('.song-item').forEach(el => {
+        el.classList.remove('drag-over-top', 'drag-over-bottom');
+    });
+    dragSrcIndex = null;
+}
+
+function reorderQueue(fromIndex, toIndex) {
+    waitForConnection(() => {
+        stompClient.send('/app/room.queue.reorder', {}, JSON.stringify({
+            roomCode: currentRoom.roomCode,
+            fromIndex: fromIndex,
+            toIndex: toIndex
+        }));
+    });
+}
+
+function removeFromQueue(songId) {
+    waitForConnection(() => {
+        stompClient.send('/app/room.queue.remove', {}, JSON.stringify({
+            roomCode: currentRoom.roomCode,
+            songId: songId
+        }));
+    });
+    showToast('Song removed from queue', 'success');
 }
 
 // ===== External Search (JioSaavn + Spotify) =====
@@ -426,16 +594,20 @@ async function checkSources() {
 }
 
 function addToQueue(songId) {
-    if (!stompClient || !stompClient.connected) {
-        showToast('Not connected to server', 'error');
-        return;
+    const doAdd = () => {
+        stompClient.send('/app/room.queue.add', {}, JSON.stringify({
+            roomCode: currentRoom.roomCode,
+            songId: songId,
+            username: currentUser
+        }));
+        showToast('Song added to queue!', 'success');
+    };
+    if (stompClient && stompClient.connected) {
+        doAdd();
+    } else {
+        showToast('Connecting... song will be added shortly.', 'info');
+        waitForConnection(doAdd);
     }
-    stompClient.send('/app/room.queue.add', {}, JSON.stringify({
-        roomCode: currentRoom.roomCode,
-        songId: songId,
-        username: currentUser
-    }));
-    showToast('Song added to queue!', 'success');
 }
 
 // ===== Playback Controls =====
@@ -491,12 +663,18 @@ function seekTo(event) {
 }
 
 function sendPlaybackCommand(action, time) {
-    if (!stompClient || !stompClient.connected) return;
-    stompClient.send('/app/room.playback', {}, JSON.stringify({
-        roomCode: currentRoom.roomCode,
-        action: action,
-        currentTime: time
-    }));
+    const doSend = () => {
+        stompClient.send('/app/room.playback', {}, JSON.stringify({
+            roomCode: currentRoom.roomCode,
+            action: action,
+            currentTime: time
+        }));
+    };
+    if (stompClient && stompClient.connected) {
+        doSend();
+    } else {
+        waitForConnection(doSend);
+    }
 }
 
 // ===== Progress Timer =====
@@ -527,9 +705,6 @@ function updateProgress() {
     const pct = audioDur > 0 ? (audioTime / audioDur) * 100 : 0;
     fill.style.width = pct + '%';
     timeCurrent.textContent = formatTime(Math.floor(audioTime));
-    
-    // Sync lyrics with playback
-    syncLyrics();
 }
 
 function updatePlayPauseIcon() {
@@ -539,81 +714,133 @@ function updatePlayPauseIcon() {
 
 // ===== WebSocket =====
 function connectWebSocket(roomCode) {
+    console.log('[WebSocket] connectWebSocket called with roomCode:', roomCode);
+    
+    // Check if libraries are loaded
+    if (typeof SockJS === 'undefined') {
+        console.error('[WebSocket] SockJS library not loaded!');
+        showToast('WebSocket library loading error. Please refresh the page.', 'error');
+        return;
+    }
+    
+    if (typeof Stomp === 'undefined') {
+        console.error('[WebSocket] Stomp library not loaded!');
+        showToast('WebSocket library loading error. Please refresh the page.', 'error');
+        return;
+    }
+    
+    if (isConnecting) {
+        console.log('[WebSocket] Already attempting to connect, skipping...');
+        return;
+    }
+    
+    if (connectionRetries >= maxRetries) {
+        console.error('[WebSocket] Max retries reached. Please refresh the page.');
+        showToast('Connection failed. Please refresh the page.', 'error');
+        return;
+    }
+    
+    isConnecting = true;
+    connectionRetries++;
+    
     const statusEl = document.getElementById('connection-status');
     statusEl.className = 'connection-status show';
-    statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Connecting...</span>';
+    statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Connecting' + (connectionRetries > 1 ? ' (attempt ' + connectionRetries + ')' : '') + '...</span>';
 
-    console.log('Attempting WebSocket connection to room:', roomCode);
-    console.log('Current location:', window.location.href);
+    console.log('[WebSocket] Connecting to /ws endpoint (attempt ' + connectionRetries + ')...');
     
     try {
         const socket = new SockJS('/ws');
+        
+        // Add socket-level error handlers
+        socket.onerror = function(error) {
+            console.error('[WebSocket] Socket error:', error);
+            isConnecting = false;
+        };
+        
+        socket.onclose = function(event) {
+            console.warn('[WebSocket] Socket closed:', event.code, event.reason);
+            isConnecting = false;
+        };
+        
         stompClient = Stomp.over(socket);
         
-        // Enable debug for troubleshooting
+        // Enable debug to see what's happening
         stompClient.debug = function(str) {
-            console.log('STOMP:', str);
+            console.log('[STOMP Debug]', str);
         };
 
         stompClient.connect({}, function(frame) {
-            console.log('WebSocket connected successfully!', frame);
+            console.log('[WebSocket] Connected successfully!', frame);
+            isConnecting = false;
+            connectionRetries = 0; // Reset on success
             statusEl.className = 'connection-status show connected';
             statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Connected</span>';
             setTimeout(() => statusEl.classList.remove('show'), 2000);
 
-            // Subscribe to room state updates
-            stompClient.subscribe('/topic/room/' + roomCode + '/state', function(msg) {
-                const state = JSON.parse(msg.body);
-                updateRoomUI(state);
-            });
+        // Execute any pending actions
+        executePendingActions();
 
-            // Subscribe to playback updates
-            stompClient.subscribe('/topic/room/' + roomCode + '/playback', function(msg) {
-                const data = JSON.parse(msg.body);
-                handlePlaybackUpdate(data);
-            });
+        // Subscribe to room state updates
+        stompClient.subscribe('/topic/room/' + roomCode + '/state', function(msg) {
+            const state = JSON.parse(msg.body);
+            updateRoomUI(state);
+        });
 
-            // Subscribe to chat
-            stompClient.subscribe('/topic/room/' + roomCode + '/chat', function(msg) {
-                const chatMsg = JSON.parse(msg.body);
-                appendChatMessage(chatMsg);
-            });
+        // Subscribe to playback updates
+        stompClient.subscribe('/topic/room/' + roomCode + '/playback', function(msg) {
+            const data = JSON.parse(msg.body);
+            handlePlaybackUpdate(data);
+        });
 
-            // Subscribe to personal sync responses
-            stompClient.subscribe('/user/queue/sync', function(msg) {
-                const state = JSON.parse(msg.body);
-                updateRoomUI(state);
-            });
+        // Subscribe to chat
+        stompClient.subscribe('/topic/room/' + roomCode + '/chat', function(msg) {
+            const chatMsg = JSON.parse(msg.body);
+            appendChatMessage(chatMsg);
+        });
 
-            // Register in the room
-            stompClient.send('/app/room.register', {}, JSON.stringify({
-                roomCode: roomCode,
-                username: currentUser
-            }));
+        // Subscribe to personal sync responses
+        stompClient.subscribe('/user/queue/sync', function(msg) {
+            const state = JSON.parse(msg.body);
+            updateRoomUI(state);
+        });
 
-        }, function(error) {
-            console.error('WebSocket connection failed:', error);
-            console.error('Error details:', JSON.stringify(error));
-            statusEl.className = 'connection-status show disconnected';
-            statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Not connected to server</span>';
-            
-            // Try to reconnect after delay
-            console.log('Will attempt to reconnect in 5 seconds...');
-            setTimeout(() => {
-                console.log('Reconnecting WebSocket...');
-                connectWebSocket(roomCode);
-            }, 5000);
+        // Register in the room
+        stompClient.send('/app/room.register', {}, JSON.stringify({
+            roomCode: roomCode,
+            username: currentUser
+        }));
+
+    }, function(error) {
+        console.error('[WebSocket] Connection failed:', error);
+        console.error('[WebSocket] Error details:', {
+            message: error.message || 'Unknown error',
+            headers: error.headers || {},
+            command: error.command || 'N/A'
         });
         
-        // Handle socket errors
-        socket.onclose = function(event) {
-            console.log('SockJS connection closed:', event);
-        };
+        isConnecting = false;
         
-    } catch (error) {
-        console.error('Error creating WebSocket connection:', error);
+        statusEl.className = 'connection-status show disconnected';
+        statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Connection failed</span>';
+        
+        // Show error with retry info
+        if (connectionRetries < maxRetries) {
+            showToast('Connection failed. Retrying...', 'error');
+            // Exponential backoff: 1s, 2s, 4s, 8s, 16s
+            const delay = Math.min(1000 * Math.pow(2, connectionRetries - 1), 10000);
+            console.log('[WebSocket] Will retry in ' + delay + 'ms...');
+            setTimeout(() => connectWebSocket(roomCode), delay);
+        } else {
+            showToast('Cannot connect to server. Please refresh the page.', 'error');
+        }
+    });
+    } catch (err) {
+        console.error('[WebSocket] Exception during connection:', err);
+        isConnecting = false;
         statusEl.className = 'connection-status show disconnected';
         statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Connection error</span>';
+        showToast('WebSocket error: ' + err.message, 'error');
     }
 }
 
@@ -651,7 +878,13 @@ function handlePlaybackUpdate(data) {
         }
 
         if (isPlaying) {
-            audioPlayer.play().catch(() => {});
+            const playPromise = audioPlayer.play();
+            if (playPromise !== undefined) {
+                playPromise.catch((err) => {
+                    console.error('Failed to sync audio playback:', err);
+                    setTimeout(() => audioPlayer.play().catch(() => {}), 300);
+                });
+            }
             startProgressTimer();
             document.getElementById('sound-waves').classList.add('active');
         } else {
@@ -804,90 +1037,6 @@ function escapeAttr(text) {
     return String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// ===== Lyrics System =====
-async function loadLyrics(songId) {
-    const container = document.getElementById('lyrics-container');
-    currentLyrics = null;
-    
-    // Show loading
-    container.innerHTML = '<div class="lyrics-loading"><i class="fas fa-spinner fa-spin"></i> Loading lyrics...</div>';
-    
-    try {
-        const res = await fetch(`/api/lyrics/${encodeURIComponent(songId)}`);
-        
-        if (!res.ok) {
-            throw new Error('Lyrics not found');
-        }
-        
-        const lyrics = await res.json();
-        currentLyrics = lyrics;
-        
-        displayLyrics(lyrics);
-    } catch (e) {
-        // No lyrics found
-        container.innerHTML = `
-            <div class="lyrics-not-found">
-                <i class="fas fa-search"></i>
-                <p>Lyrics not available for this song</p>
-            </div>
-        `;
-    }
-}
-
-function displayLyrics(lyrics) {
-    const container = document.getElementById('lyrics-container');
-    
-    if (!lyrics) {
-        container.innerHTML = '<div class="lyrics-empty"><i class="fas fa-music"></i><p>Lyrics will appear here when a song is playing</p></div>';
-        return;
-    }
-    
-    // If we have synced lyrics (LRC format with timestamps)
-    if (lyrics.lines && lyrics.lines.length > 0) {
-        container.innerHTML = lyrics.lines.map((line, idx) => 
-            `<div class="lyric-line" data-time="${line.time}" data-index="${idx}">${escapeHtml(line.text)}</div>`
-        ).join('');
-    } 
-    // Otherwise display plain lyrics
-    else if (lyrics.plainLyrics) {
-        container.innerHTML = `<div class="lyrics-plain">${escapeHtml(lyrics.plainLyrics)}</div>`;
-    } 
-    else {
-        container.innerHTML = '<div class="lyrics-not-found"><i class="fas fa-search"></i><p>Lyrics not available</p></div>';
-    }
-}
-
-function syncLyrics() {
-    if (!currentLyrics || !currentLyrics.lines || currentLyrics.lines.length === 0) {
-        return;
-    }
-    
-    const lines = document.querySelectorAll('.lyric-line');
-    if (lines.length === 0) return;
-    
-    let activeIndex = -1;
-    
-    // Find the current active line based on currentTime
-    for (let i = currentLyrics.lines.length - 1; i >= 0; i--) {
-        if (currentTime >= currentLyrics.lines[i].time) {
-            activeIndex = i;
-            break;
-        }
-    }
-    
-    // Update classes
-    lines.forEach((line, idx) => {
-        line.classList.remove('active', 'past');
-        if (idx === activeIndex) {
-            line.classList.add('active');
-            // Auto-scroll to active line
-            line.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        } else if (idx < activeIndex) {
-            line.classList.add('past');
-        }
-    });
-}
-
 // ===== Expose functions to global scope for onclick handlers =====
 window.createRoom = createRoom;
 window.joinRoom = joinRoom;
@@ -902,6 +1051,12 @@ window.switchTab = switchTab;
 window.searchExternal = searchExternal;
 window.quickSearch = quickSearch;
 window.addToQueue = addToQueue;
+window.removeFromQueue = removeFromQueue;
+window.reorderQueue = reorderQueue;
+window.onQueueDragStart = onQueueDragStart;
+window.onQueueDragOver = onQueueDragOver;
+window.onQueueDrop = onQueueDrop;
+window.onQueueDragEnd = onQueueDragEnd;
 window.copyRoomCode = copyRoomCode;
 console.log('All functions exposed to window object');
 

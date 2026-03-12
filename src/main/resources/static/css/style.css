@@ -1112,7 +1112,7 @@ body {
     padding: 10px 14px;
     border-radius: var(--radius-sm);
     cursor: pointer;
-    transition: var(--transition);
+    transition: background 0.2s, opacity 0.2s, transform 0.2s;
     position: relative;
 }
 .song-item:hover {
@@ -1120,6 +1120,33 @@ body {
 }
 .song-item.playing {
     background: rgba(29, 185, 84, 0.1);
+}
+.song-item.dragging {
+    opacity: 0.4;
+}
+.song-item.drag-over-top {
+    border-top: 2px solid var(--accent);
+}
+.song-item.drag-over-bottom {
+    border-bottom: 2px solid var(--accent);
+}
+.song-item-drag {
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: grab;
+    opacity: 0;
+    transition: opacity 0.2s;
+    padding: 4px;
+}
+.song-item:hover .song-item-drag {
+    opacity: 0.6;
+}
+.song-item-drag:hover {
+    opacity: 1 !important;
+    color: var(--text-primary);
+}
+.song-item-drag:active {
+    cursor: grabbing;
 }
 .song-item-index {
     width: 24px;
@@ -1171,19 +1198,20 @@ body {
     margin-right: 8px;
 }
 .song-item-action {
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
     border: none;
     background: transparent;
     color: var(--text-muted);
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: var(--transition);
     opacity: 0;
+    flex-shrink: 0;
 }
 .song-item:hover .song-item-action {
     opacity: 1;

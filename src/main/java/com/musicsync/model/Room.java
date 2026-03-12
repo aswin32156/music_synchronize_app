@@ -64,6 +64,12 @@ public class Room {
         queue.removeIf(s -> s.getId().equals(songId));
     }
 
+    public void reorderQueue(int fromIndex, int toIndex) {
+        if (fromIndex < 0 || fromIndex >= queue.size() || toIndex < 0 || toIndex >= queue.size()) return;
+        Song song = queue.remove(fromIndex);
+        queue.add(toIndex, song);
+    }
+
     public void addChatMessage(ChatMessage message) {
         chatHistory.add(message);
         if (chatHistory.size() > 200) {
