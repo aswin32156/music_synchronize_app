@@ -431,7 +431,7 @@ function updateQueue(queue, playbackState) {
                     ? '<i class="fas fa-volume-up" style="color: var(--accent); font-size: 12px;"></i>'
                     : index + 1}
             </span>
-            <img class="song-item-cover" src="${escapeAttr(song.coverUrl)}" alt="${escapeAttr(song.title)}">
+            <img class="song-item-cover" draggable="false" src="${escapeAttr(song.coverUrl)}" alt="${escapeAttr(song.title)}">
             <div class="song-item-info">
                 <div class="song-item-title">${escapeHtml(song.title)}</div>
                 <div class="song-item-artist">${escapeHtml(song.artist)}</div>
