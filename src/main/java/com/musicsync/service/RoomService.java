@@ -1,19 +1,25 @@
 package com.musicsync.service;
 
-import com.musicsync.dto.RoomState;
-import com.musicsync.model.*;
+import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 import org.springframework.stereotype.Service;
 
-import java.security.SecureRandom;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import com.musicsync.dto.RoomState;
+import com.musicsync.model.PersistentUser;
+import com.musicsync.model.Room;
+import com.musicsync.model.User;
 
 @Service
 public class RoomService {
 
     private final Map<String, Room> rooms = new ConcurrentHashMap<>();
     private final Map<String, String> sessionToRoom = new ConcurrentHashMap<>();
+    private final Map<String, String> sessionToUserId = new ConcurrentHashMap<>();
     private final SecureRandom random = new SecureRandom();
+    private final UserService userService;
 
     private static final String[] AVATAR_COLORS = {
         "#1DB954", "#1ED760", "#E91E63", "#9C27B0", "#673AB7",
@@ -21,28 +27,43 @@ public class RoomService {
         "#FF5722", "#795548", "#607D8B", "#F44336", "#4CAF50"
     };
 
-    public Room createRoom(String username, String roomName) {
-        String roomCode = generateRoomCode();
-        String userId = UUID.randomUUID().toString();
-        String avatarColor = AVATAR_COLORS[random.nextInt(AVATAR_COLORS.length)];
+    public RoomService(UserService userService) {
+        this.userService = userService;
+    }
 
-        User host = new User(userId, username, avatarColor, true, null);
-        Room room = new Room(roomCode, roomName, host);
+    public Room createRoom(String username, String roomName, String password) {
+        String roomCode = generateRoomCode();
+        
+        // Get or create persistent user
+        PersistentUser persistentUser = userService.getOrCreateUser(username);
+        
+        User host = new User(persistentUser.getId(), username, persistentUser.getAvatarColor(), true, null);
+        Room room = new Room(roomCode, roomName, password, host);
         room.addUser(host);
 
         rooms.put(roomCode, room);
+        userService.setUserOnlineStatus(persistentUser.getId(), true, roomCode);
         return room;
     }
 
-    public Room joinRoom(String roomCode, String username) {
+    public Room joinRoom(String roomCode, String username, String password) {
         Room room = rooms.get(roomCode.toUpperCase());
         if (room == null) {
             return null;
         }
-        String userId = UUID.randomUUID().toString();
-        String avatarColor = AVATAR_COLORS[random.nextInt(AVATAR_COLORS.length)];
-        User user = new User(userId, username, avatarColor, false, null);
+        // Validate password
+        if (room.getPassword() != null && !room.getPassword().isEmpty()) {
+            if (password == null || !password.equals(room.getPassword())) {
+                throw new IllegalArgumentException("Incorrect password");
+            }
+        }
+        
+        // Get or create persistent user
+        PersistentUser persistentUser = userService.getOrCreateUser(username);
+        
+        User user = new User(persistentUser.getId(), username, persistentUser.getAvatarColor(), false, null);
         room.addUser(user);
+        userService.setUserOnlineStatus(persistentUser.getId(), true, roomCode);
         return room;
     }
 
@@ -54,20 +75,24 @@ public class RoomService {
         return rooms.containsKey(roomCode.toUpperCase());
     }
 
-    public void registerSession(String sessionId, String roomCode) {
-        sessionToRoom.put(sessionId, roomCode.toUpperCase());
-    }
-
     public String getRoomCodeBySession(String sessionId) {
         return sessionToRoom.get(sessionId);
     }
 
     public void handleDisconnect(String sessionId) {
         String roomCode = sessionToRoom.remove(sessionId);
+        String userId = sessionToUserId.remove(sessionId);
+        
         if (roomCode != null) {
             Room room = rooms.get(roomCode);
             if (room != null) {
                 room.removeUserBySession(sessionId);
+                
+                // Set user offline if not in any other room
+                if (userId != null) {
+                    userService.setUserOnlineStatus(userId, false, null);
+                }
+                
                 if (room.getUsers().isEmpty()) {
                     rooms.remove(roomCode);
                 }
@@ -89,6 +114,7 @@ public class RoomService {
         if (user != null) {
             user.setSessionId(sessionId);
             sessionToRoom.put(sessionId, roomCode.toUpperCase());
+            sessionToUserId.put(sessionId, user.getId());
         }
     }
 

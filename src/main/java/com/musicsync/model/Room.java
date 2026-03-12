@@ -7,6 +7,7 @@ public class Room {
 
     private String roomCode;
     private String roomName;
+    private String password;
     private User host;
     private final List<User> users = new CopyOnWriteArrayList<>();
     private final List<Song> queue = new CopyOnWriteArrayList<>();
@@ -19,10 +20,11 @@ public class Room {
         this.createdAt = System.currentTimeMillis();
     }
 
-    public Room(String roomCode, String roomName, User host) {
+    public Room(String roomCode, String roomName, String password, User host) {
         this();
         this.roomCode = roomCode;
         this.roomName = roomName;
+        this.password = password;
         this.host = host;
     }
 
@@ -30,6 +32,8 @@ public class Room {
     public void setRoomCode(String roomCode) { this.roomCode = roomCode; }
     public String getRoomName() { return roomName; }
     public void setRoomName(String roomName) { this.roomName = roomName; }
+    public String getPassword() { return password; }
+    public void setPassword(String password) { this.password = password; }
     public User getHost() { return host; }
     public void setHost(User host) { this.host = host; }
     public List<User> getUsers() { return users; }

@@ -10,7 +10,25 @@ let currentSongIndex = -1;
 let progressInterval = null;
 let currentTime = 0;
 let duration = 0;
-let library = [];
+
+
+// Audio player
+const audioPlayer = new Audio();
+audioPlayer.volume = 1.0;
+audioPlayer.addEventListener('ended', () => {
+    if (isHost) {
+        nextSong();
+    }
+});
+audioPlayer.addEventListener('timeupdate', () => {
+    currentTime = audioPlayer.currentTime;
+    duration = audioPlayer.duration || 0;
+    updateProgress();
+});
+audioPlayer.addEventListener('loadedmetadata', () => {
+    duration = audioPlayer.duration || 0;
+    document.getElementById('time-total').textContent = formatTime(Math.floor(duration));
+});
 
 // ===== Screen Management =====
 function showScreen(screenId) {
@@ -48,6 +66,7 @@ async function fetchStats() {
 async function createRoom() {
     const username = document.getElementById('create-username').value.trim();
     const roomName = document.getElementById('create-room-name').value.trim();
+    const password = document.getElementById('create-password').value.trim();
     const errorEl = document.getElementById('create-error');
     errorEl.classList.add('hidden');
 
@@ -64,7 +83,11 @@ async function createRoom() {
         const res = await fetch('/api/rooms/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, roomName: roomName || undefined })
+            body: JSON.stringify({ 
+                username, 
+                roomName: roomName || undefined,
+                password: password || undefined
+            })
         });
 
         if (!res.ok) {
@@ -90,6 +113,7 @@ async function createRoom() {
 async function joinRoom() {
     const username = document.getElementById('join-username').value.trim();
     const roomCode = document.getElementById('join-room-code').value.trim().toUpperCase();
+    const password = document.getElementById('join-password').value.trim();
     const errorEl = document.getElementById('join-error');
     errorEl.classList.add('hidden');
 
@@ -110,7 +134,11 @@ async function joinRoom() {
         const res = await fetch('/api/rooms/join', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, roomCode })
+            body: JSON.stringify({ 
+                username, 
+                roomCode,
+                password: password || undefined
+            })
         });
 
         if (!res.ok) {
@@ -138,7 +166,7 @@ function enterRoom(roomState) {
     showScreen('room-screen');
     updateRoomUI(roomState);
     connectWebSocket(roomState.roomCode);
-    loadLibrary();
+    checkSources();
 
     // Show/hide host controls
     const hostIndicator = document.getElementById('host-indicator');
@@ -155,6 +183,21 @@ function updateRoomUI(state) {
     // Room info
     document.getElementById('room-name-display').textContent = state.roomName || 'Music Room';
     document.getElementById('room-code-display').textContent = state.roomCode;
+
+    // Set current user ID (extract from users list)
+    if (!currentUserId && currentUser) {
+        const user = state.users.find(u => u.username === currentUser);
+        if (user) {
+            currentUserId = user.id;
+            loadFriends();
+            loadFriendRequests();
+            // Auto-refresh friends every 10 seconds
+            setInterval(() => {
+                loadFriends();
+                loadFriendRequests();
+            }, 10000);
+        }
+    }
 
     // Users
     updateUsersList(state.users);
@@ -221,15 +264,30 @@ function updateNowPlaying(song, playbackState) {
         currentTime = playbackState.currentTime || 0;
         currentSongIndex = playbackState.currentSongIndex;
         updatePlayPauseIcon();
-        updateProgress();
+
+        // Load audio for the current song
+        if (song && song.audioUrl && audioPlayer.getAttribute('data-song-id') !== song.id) {
+            audioPlayer.setAttribute('data-song-id', song.id);
+            audioPlayer.src = song.audioUrl;
+            audioPlayer.load();
+        }
+
+        // Sync seek position
+        if (audioPlayer.src && Math.abs(audioPlayer.currentTime - currentTime) > 2) {
+            audioPlayer.currentTime = currentTime;
+        }
 
         if (isPlaying) {
+            audioPlayer.play().catch(() => {});
             startProgressTimer();
             document.getElementById('sound-waves').classList.add('active');
         } else {
+            audioPlayer.pause();
             stopProgressTimer();
             document.getElementById('sound-waves').classList.remove('active');
         }
+
+        updateProgress();
     }
 }
 
@@ -267,46 +325,91 @@ function updateQueue(queue, playbackState) {
     `).join('');
 }
 
-// ===== Library =====
-async function loadLibrary() {
+// ===== External Search (JioSaavn + Spotify) =====
+let searchTimeout = null;
+
+async function searchExternal() {
+    const input = document.getElementById('external-search');
+    const query = input.value.trim();
+    if (!query) {
+        showToast('Please enter a search query', 'info');
+        return;
+    }
+
+    const statusEl = document.getElementById('search-status');
+    const emptyEl = document.getElementById('search-empty');
+    const resultsList = document.getElementById('search-results');
+
+    statusEl.classList.remove('hidden');
+    emptyEl.classList.add('hidden');
+    resultsList.innerHTML = '';
+
     try {
-        const res = await fetch('/api/music/library');
-        library = await res.json();
-        renderLibrary(library);
+        const res = await fetch('/api/music/search/external?q=' + encodeURIComponent(query) + '&limit=20');
+        if (!res.ok) throw new Error('Search failed');
+        const songs = await res.json();
+
+        statusEl.classList.add('hidden');
+
+        if (songs.length === 0) {
+            resultsList.innerHTML = `
+                <div class="search-no-results">
+                    <i class="fas fa-search" style="font-size: 2rem; color: #666; margin-bottom: 0.5rem;"></i>
+                    <p>No results found for "${escapeHtml(query)}"</p>
+                    <p style="font-size: 0.8rem; color: #888;">Try different keywords or check spelling</p>
+                </div>`;
+            return;
+        }
+
+        renderSearchResults(songs);
     } catch (e) {
-        console.error('Failed to load library:', e);
+        statusEl.classList.add('hidden');
+        showToast('Search failed: ' + e.message, 'error');
+        console.error('External search failed:', e);
     }
 }
 
-function renderLibrary(songs) {
-    const list = document.getElementById('library-list');
-    list.innerHTML = songs.map(song => `
+function quickSearch(query) {
+    document.getElementById('external-search').value = query;
+    searchExternal();
+}
+
+function renderSearchResults(songs) {
+    const list = document.getElementById('search-results');
+    list.innerHTML = songs.map(song => {
+        const sourceIcon = song.id.startsWith('jio_')
+            ? '<span class="source-tag jio">JioSaavn</span>'
+            : song.id.startsWith('spotify_')
+            ? '<span class="source-tag spot">Spotify</span>'
+            : '';
+        return `
         <div class="song-item">
-            <img class="song-item-cover" src="${escapeAttr(song.coverUrl)}" alt="${escapeAttr(song.title)}">
+            <img class="song-item-cover" src="${escapeAttr(song.coverUrl)}" alt="${escapeAttr(song.title)}"
+                 onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2250%22 height=%2250%22><rect fill=%22%23333%22 width=%2250%22 height=%2250%22/><text x=%2225%22 y=%2230%22 fill=%22%23888%22 text-anchor=%22middle%22 font-size=%2220%22>♪</text></svg>'">
             <div class="song-item-info">
                 <div class="song-item-title">${escapeHtml(song.title)}</div>
                 <div class="song-item-artist">${escapeHtml(song.artist)} · ${escapeHtml(song.album)}</div>
             </div>
+            ${sourceIcon}
             <span class="song-item-duration">${formatTime(song.durationSeconds)}</span>
             <button class="song-item-action" onclick="event.stopPropagation(); addToQueue('${escapeAttr(song.id)}')" title="Add to queue">
                 <i class="fas fa-plus"></i>
             </button>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
 }
 
-function searchLibrary(query) {
-    if (!query) {
-        renderLibrary(library);
-        return;
+async function checkSources() {
+    try {
+        const res = await fetch('/api/music/sources');
+        const data = await res.json();
+        if (data.spotifyConfigured) {
+            const badge = document.getElementById('spotify-badge');
+            if (badge) badge.classList.remove('hidden');
+        }
+    } catch (e) {
+        console.log('Could not check sources:', e);
     }
-    const lower = query.toLowerCase();
-    const filtered = library.filter(s =>
-        s.title.toLowerCase().includes(lower) ||
-        s.artist.toLowerCase().includes(lower) ||
-        s.album.toLowerCase().includes(lower)
-    );
-    renderLibrary(filtered);
 }
 
 function addToQueue(songId) {
@@ -334,7 +437,7 @@ function togglePlayPause() {
     }
 
     const action = isPlaying ? 'pause' : 'play';
-    sendPlaybackCommand(action, currentTime);
+    sendPlaybackCommand(action, audioPlayer.currentTime || currentTime);
 }
 
 function nextSong() {
@@ -350,7 +453,7 @@ function previousSong() {
         showToast('Only the host can control playback', 'info');
         return;
     }
-    if (currentTime > 3) {
+    if (audioPlayer.currentTime > 3) {
         sendPlaybackCommand('seek', 0);
     } else {
         sendPlaybackCommand('previous', 0);
@@ -370,7 +473,7 @@ function seekTo(event) {
     const bar = document.getElementById('progress-bar');
     const rect = bar.getBoundingClientRect();
     const pos = (event.clientX - rect.left) / rect.width;
-    const seekTime = pos * duration;
+    const seekTime = pos * (audioPlayer.duration || duration);
     sendPlaybackCommand('seek', seekTime);
 }
 
@@ -386,18 +489,12 @@ function sendPlaybackCommand(action, time) {
 // ===== Progress Timer =====
 function startProgressTimer() {
     stopProgressTimer();
+    // Audio timeupdate event handles progress now, but keep a backup timer for UI sync
     progressInterval = setInterval(() => {
-        if (isPlaying && duration > 0) {
-            currentTime += 0.25;
-            if (currentTime >= duration) {
-                currentTime = duration;
-                if (isHost) {
-                    nextSong();
-                }
-            }
+        if (isPlaying) {
             updateProgress();
         }
-    }, 250);
+    }, 500);
 }
 
 function stopProgressTimer() {
@@ -412,9 +509,11 @@ function updateProgress() {
     const thumb = document.getElementById('progress-thumb');
     const timeCurrent = document.getElementById('time-current');
 
-    const pct = duration > 0 ? (currentTime / duration) * 100 : 0;
+    const audioDur = audioPlayer.duration || duration;
+    const audioTime = audioPlayer.currentTime || currentTime;
+    const pct = audioDur > 0 ? (audioTime / audioDur) * 100 : 0;
     fill.style.width = pct + '%';
-    timeCurrent.textContent = formatTime(Math.floor(currentTime));
+    timeCurrent.textContent = formatTime(Math.floor(audioTime));
 }
 
 function updatePlayPauseIcon() {
@@ -480,22 +579,6 @@ function handlePlaybackUpdate(data) {
     const ps = data.playbackState;
     const song = data.currentSong;
 
-    if (ps) {
-        isPlaying = ps.playing;
-        currentTime = ps.currentTime || 0;
-        currentSongIndex = ps.currentSongIndex;
-        updatePlayPauseIcon();
-        updateProgress();
-
-        if (isPlaying) {
-            startProgressTimer();
-            document.getElementById('sound-waves').classList.add('active');
-        } else {
-            stopProgressTimer();
-            document.getElementById('sound-waves').classList.remove('active');
-        }
-    }
-
     if (song && song.title) {
         document.getElementById('no-song-placeholder').classList.add('hidden');
         document.getElementById('song-title').textContent = song.title;
@@ -505,6 +588,37 @@ function handlePlaybackUpdate(data) {
         document.getElementById('now-playing-bg').style.backgroundImage = `url(${song.coverUrl})`;
         duration = song.durationSeconds || 0;
         document.getElementById('time-total').textContent = formatTime(duration);
+
+        // Load new audio if song changed
+        if (song.audioUrl && audioPlayer.getAttribute('data-song-id') !== song.id) {
+            audioPlayer.setAttribute('data-song-id', song.id);
+            audioPlayer.src = song.audioUrl;
+            audioPlayer.load();
+        }
+    }
+
+    if (ps) {
+        isPlaying = ps.playing;
+        currentTime = ps.currentTime || 0;
+        currentSongIndex = ps.currentSongIndex;
+        updatePlayPauseIcon();
+
+        // Sync audio playback
+        if (Math.abs(audioPlayer.currentTime - currentTime) > 2) {
+            audioPlayer.currentTime = currentTime;
+        }
+
+        if (isPlaying) {
+            audioPlayer.play().catch(() => {});
+            startProgressTimer();
+            document.getElementById('sound-waves').classList.add('active');
+        } else {
+            audioPlayer.pause();
+            stopProgressTimer();
+            document.getElementById('sound-waves').classList.remove('active');
+        }
+
+        updateProgress();
     }
 
     // Update queue highlighting
@@ -597,6 +711,9 @@ function leaveRoom() {
         stompClient.disconnect();
         stompClient = null;
     }
+    audioPlayer.pause();
+    audioPlayer.src = '';
+    audioPlayer.removeAttribute('data-song-id');
     currentRoom = null;
     currentUser = null;
     isHost = false;
@@ -643,6 +760,216 @@ function escapeHtml(text) {
 function escapeAttr(text) {
     if (!text) return '';
     return String(text).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ===== Friends System =====
+let currentUserId = null;
+let friendsListData = [];
+let searchTimeout = null;
+
+function toggleFriendsPanel() {
+    const panel = document.getElementById('friends-panel');
+    const icon = document.getElementById('friends-expand-icon');
+    panel.classList.toggle('hidden');
+    icon.classList.toggle('rotate-180');
+}
+
+async function loadFriends() {
+    if (!currentUserId) return;
+    
+    try {
+        const res = await fetch(`/api/friends/${currentUserId}`);
+        friendsListData = await res.json();
+        renderFriendsList();
+        document.getElementById('friend-count').textContent = friendsListData.length;
+    } catch (e) {
+        console.error('Failed to load friends:', e);
+    }
+}
+
+async function loadFriendRequests() {
+    if (!currentUserId) return;
+    
+    try {
+        const res = await fetch(`/api/friends/${currentUserId}/requests`);
+        const requests = await res.json();
+        
+        if (requests.length > 0) {
+            document.getElementById('friend-requests-section').classList.remove('hidden');
+            document.getElementById('request-count').textContent = requests.length;
+            renderFriendRequests(requests);
+        } else {
+            document.getElementById('friend-requests-section').classList.add('hidden');
+        }
+    } catch (e) {
+        console.error('Failed to load friend requests:', e);
+    }
+}
+
+function renderFriendsList() {
+    const list = document.getElementById('friends-list');
+    
+    if (friendsListData.length === 0) {
+        list.innerHTML = '<div class="empty-friends"><p>No friends yet. Search above to add friends!</p></div>';
+        return;
+    }
+    
+    list.innerHTML = friendsListData.map(friend => `
+        <div class="friend-item">
+            <div class="user-avatar" style="background: ${escapeAttr(friend.avatarColor)}">
+                ${escapeHtml(friend.username.charAt(0).toUpperCase())}
+                ${friend.online ? '<div class="online-dot"></div>' : ''}
+            </div>
+            <div class="friend-info">
+                <div class="friend-name">${escapeHtml(friend.username)}</div>
+                <div class="friend-status">
+                    ${friend.online ? (friend.currentRoomCode ? `<span class="status-in-room">In room ${friend.currentRoomCode}</span>` : '<span class="status-online">Online</span>') : '<span class="status-offline">Offline</span>'}
+                </div>
+            </div>
+            <div class="friend-actions">
+                ${friend.online && friend.currentRoomCode ? `<button class="btn-icon-small" onclick="joinFriendRoom('${escapeAttr(friend.currentRoomCode)}')" title="Join their room"><i class="fas fa-sign-in-alt"></i></button>` : ''}
+                <button class="btn-icon-small danger" onclick="removeFriend('${escapeAttr(friend.id)}')" title="Remove friend"><i class="fas fa-user-times"></i></button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderFriendRequests(requests) {
+    const list = document.getElementById('friend-requests-list');
+    list.innerHTML = requests.map(req => `
+        <div class="friend-request-item">
+            <div class="request-info">
+                <strong>${escapeHtml(req.fromUsername)}</strong> wants to be friends
+            </div>
+            <div class="request-actions">
+                <button class="btn-sm btn-primary" onclick="acceptFriendRequest('${escapeAttr(req.id)}')">Accept</button>
+                <button class="btn-sm" onclick="rejectFriendRequest('${escapeAttr(req.id)}')">Reject</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function searchFriends(query) {
+    const resultsDiv = document.getElementById('friend-search-results');
+    
+    clearTimeout(searchTimeout);
+    
+    if (!query || query.trim().length < 2) {
+        resultsDiv.innerHTML = '';
+        resultsDiv.classList.remove('active');
+        return;
+    }
+    
+    searchTimeout = setTimeout(async () => {
+        try {
+            const res = await fetch(`/api/friends/search?q=${encodeURIComponent(query.trim())}`);
+            const users = await res.json();
+            
+            if (users.length === 0) {
+                resultsDiv.innerHTML = '<div class="search-result-empty">No users found</div>';
+            } else {
+                resultsDiv.innerHTML = users
+                    .filter(u => u.id !== currentUserId)
+                    .filter(u => !friendsListData.some(f => f.id === u.id))
+                    .map(user => `
+                        <div class="search-result-item" onclick="sendFriendRequest('${escapeAttr(user.username)}')">
+                            <div class="user-avatar" style="background: ${escapeAttr(user.avatarColor)}">
+                                ${escapeHtml(user.username.charAt(0).toUpperCase())}
+                            </div>
+                            <div class="result-name">${escapeHtml(user.username)}</div>
+                            <i class="fas fa-user-plus"></i>
+                        </div>
+                    `).join('');
+            }
+            
+            resultsDiv.classList.add('active');
+        } catch (e) {
+            console.error('Search failed:', e);
+            resultsDiv.innerHTML = '<div class="search-result-empty">Search failed</div>';
+        }
+    }, 300);
+}
+
+async function sendFriendRequest(toUsername) {
+    if (!currentUserId) return;
+    
+    try {
+        const res = await fetch('/api/friends/request', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUserId, toUsername })
+        });
+        
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Failed to send request');
+        }
+        
+        showToast(`Friend request sent to ${toUsername}`, 'success');
+        document.getElementById('friend-search-input').value = '';
+        document.getElementById('friend-search-results').innerHTML = '';
+        document.getElementById('friend-search-results').classList.remove('active');
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+}
+
+async function acceptFriendRequest(requestId) {
+    try {
+        const res = await fetch(`/api/friends/request/${requestId}/accept`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUserId })
+        });
+        
+        if (!res.ok) throw new Error('Failed to accept request');
+        
+        showToast('Friend request accepted!', 'success');
+        loadFriendRequests();
+        loadFriends();
+    } catch (e) {
+        showToast('Failed to accept request', 'error');
+    }
+}
+
+async function rejectFriendRequest(requestId) {
+    try {
+        const res = await fetch(`/api/friends/request/${requestId}/reject`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUserId })
+        });
+        
+        if (!res.ok) throw new Error('Failed to reject request');
+        
+        showToast('Friend request rejected', 'info');
+        loadFriendRequests();
+    } catch (e) {
+        showToast('Failed to reject request', 'error');
+    }
+}
+
+async function removeFriend(friendId) {
+    if (!confirm('Remove this friend?')) return;
+    
+    try {
+        const res = await fetch(`/api/friends/${currentUserId}/${friendId}`, {
+            method: 'DELETE'
+        });
+        
+        if (!res.ok) throw new Error('Failed to remove friend');
+        
+        showToast('Friend removed', 'info');
+        loadFriends();
+    } catch (e) {
+        showToast('Failed to remove friend', 'error');
+    }
+}
+
+function joinFriendRoom(roomCode) {
+    if (!currentUser) return;
+    showToast(`Joining room ${roomCode}...`, 'info');
+    window.location.reload(); // Reload to join screen, then auto-join with code
 }
 
 // Enter key handlers for forms

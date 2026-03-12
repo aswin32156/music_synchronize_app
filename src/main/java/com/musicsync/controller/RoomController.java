@@ -1,13 +1,24 @@
 package com.musicsync.controller;
 
-import com.musicsync.dto.*;
-import com.musicsync.model.*;
-import com.musicsync.service.*;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
 import java.util.List;
 import java.util.Map;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.musicsync.dto.CreateRoomRequest;
+import com.musicsync.dto.JoinRoomRequest;
+import com.musicsync.dto.RoomState;
+import com.musicsync.model.Room;
+import com.musicsync.model.Song;
+import com.musicsync.service.MusicService;
+import com.musicsync.service.RoomService;
 
 @RestController
 @RequestMapping("/api")
@@ -29,7 +40,9 @@ public class RoomController {
         if (request.getRoomName() == null || request.getRoomName().isBlank()) {
             request.setRoomName(request.getUsername() + "'s Room");
         }
-        Room room = roomService.createRoom(request.getUsername().trim(), request.getRoomName().trim());
+        String password = request.getPassword() != null && !request.getPassword().isBlank() 
+            ? request.getPassword().trim() : null;
+        Room room = roomService.createRoom(request.getUsername().trim(), request.getRoomName().trim(), password);
         RoomState state = roomService.getRoomState(room.getRoomCode());
         return ResponseEntity.ok(state);
     }
@@ -46,9 +59,14 @@ public class RoomController {
         if (!roomService.roomExists(code)) {
             return ResponseEntity.status(404).body(Map.of("error", "Room not found. Check the code and try again."));
         }
-        Room room = roomService.joinRoom(code, request.getUsername().trim());
-        RoomState state = roomService.getRoomState(room.getRoomCode());
-        return ResponseEntity.ok(state);
+        try {
+            String password = request.getPassword() != null ? request.getPassword().trim() : null;
+            Room room = roomService.joinRoom(code, request.getUsername().trim(), password);
+            RoomState state = roomService.getRoomState(room.getRoomCode());
+            return ResponseEntity.ok(state);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(401).body(Map.of("error", e.getMessage()));
+        }
     }
 
     @GetMapping("/rooms/{roomCode}")
@@ -74,6 +92,21 @@ public class RoomController {
     @GetMapping("/music/search")
     public ResponseEntity<List<Song>> searchSongs(@RequestParam(defaultValue = "") String q) {
         return ResponseEntity.ok(musicService.searchSongs(q));
+    }
+
+    @GetMapping("/music/search/external")
+    public ResponseEntity<List<Song>> searchExternal(
+            @RequestParam(defaultValue = "") String q,
+            @RequestParam(defaultValue = "20") int limit) {
+        if (q.isBlank()) {
+            return ResponseEntity.ok(List.of());
+        }
+        return ResponseEntity.ok(musicService.searchExternal(q, Math.min(limit, 40)));
+    }
+
+    @GetMapping("/music/sources")
+    public ResponseEntity<?> getAvailableSources() {
+        return ResponseEntity.ok(musicService.getAvailableSources());
     }
 
     @GetMapping("/stats")

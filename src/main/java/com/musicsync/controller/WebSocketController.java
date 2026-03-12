@@ -129,14 +129,21 @@ public class WebSocketController {
         queuedSong.setAddedBy(request.getUsername());
         room.addSongToQueue(queuedSong);
 
+        // Auto-play if this is the first song in the queue
+        if (room.getQueue().size() == 1) {
+            PlaybackState state = room.getPlaybackState();
+            state.setCurrentSongIndex(0);
+            state.setCurrentTime(0);
+            state.setPlaying(true);
+        }
+
         ChatMessage systemMsg = new ChatMessage(
             UUID.randomUUID().toString(), "System", "#1DB954",
             request.getUsername() + " added \"" + song.getTitle() + "\" to the queue", "system"
         );
         room.addChatMessage(systemMsg);
 
-        broadcastRoomState(roomCode);
-        messagingTemplate.convertAndSend("/topic/room/" + roomCode + "/chat", systemMsg);
+        broadcastRoomState(roomCode);        broadcastPlaybackState(roomCode);        messagingTemplate.convertAndSend("/topic/room/" + roomCode + "/chat", systemMsg);
     }
 
     @MessageMapping("/room.queue.remove")

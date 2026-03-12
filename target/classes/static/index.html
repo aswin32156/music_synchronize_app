@@ -139,6 +139,13 @@
                             <input type="text" id="create-room-name" placeholder="My awesome room" maxlength="30">
                         </div>
                     </div>
+                    <div class="input-group">
+                        <label>Password <span class="optional">(optional - leave blank for open room)</span></label>
+                        <div class="input-wrapper">
+                            <i class="fas fa-lock"></i>
+                            <input type="password" id="create-password" placeholder="Enter password" maxlength="20">
+                        </div>
+                    </div>
                     <button class="btn btn-primary btn-full" id="btn-create-room" onclick="createRoom()">
                         <i class="fas fa-rocket"></i>
                         Create Room
@@ -177,6 +184,13 @@
                             <i class="fas fa-key"></i>
                             <input type="text" id="join-room-code" placeholder="XXXXXX" maxlength="6"
                                    style="text-transform: uppercase; letter-spacing: 4px; font-weight: 700;">
+                        </div>
+                    </div>
+                    <div class="input-group">
+                        <label>Password <span class="optional">(if required)</span></label>
+                        <div class="input-wrapper">
+                            <i class="fas fa-lock"></i>
+                            <input type="password" id="join-password" placeholder="Enter room password" maxlength="20">
                         </div>
                     </div>
                     <button class="btn btn-primary btn-full" id="btn-join-room" onclick="joinRoom()">
@@ -218,6 +232,43 @@
                     <div class="users-list" id="users-list"></div>
                 </div>
 
+                <!-- Friends Section -->
+                <div class="sidebar-section friends-section">
+                    <div class="section-title clickable" onclick="toggleFriendsPanel()">
+                        <i class="fas fa-user-friends"></i>
+                        <span>Friends</span>
+                        <span class="badge" id="friend-count">0</span>
+                        <i class="fas fa-chevron-down expand-icon" id="friends-expand-icon"></i>
+                    </div>
+                    <div class="friends-panel hidden" id="friends-panel">
+                        <!-- Add Friend Search -->
+                        <div class="add-friend-search">
+                            <input type="text" id="friend-search-input" placeholder="Search username..." 
+                                   oninput="searchFriends(this.value)" maxlength="20">
+                            <div class="search-results" id="friend-search-results"></div>
+                        </div>
+                        
+                        <!-- Friend Requests -->
+                        <div class="friend-requests hidden" id="friend-requests-section">
+                            <div class="section-subtitle">
+                                <i class="fas fa-envelope"></i> Pending Requests
+                                <span class="badge" id="request-count">0</span>
+                            </div>
+                            <div id="friend-requests-list"></div>
+                        </div>
+                        
+                        <!-- Friends List -->
+                        <div class="section-subtitle">
+                            <i class="fas fa-users"></i> My Friends
+                        </div>
+                        <div class="friends-list" id="friends-list">
+                            <div class="empty-friends">
+                                <p>No friends yet. Search above to add friends!</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Chat Section -->
                 <div class="sidebar-section chat-section">
                     <div class="section-title">
@@ -248,7 +299,7 @@
                                 <div class="no-song-placeholder" id="no-song-placeholder">
                                     <i class="fas fa-music"></i>
                                     <p>No song playing</p>
-                                    <small>Add songs from the library below</small>
+                                    <small>Search and add songs to get started</small>
                                 </div>
                             </div>
                             <div class="sound-waves" id="sound-waves">
@@ -293,15 +344,15 @@
                     </div>
                 </div>
 
-                <!-- Tabs: Queue / Library -->
+                <!-- Tabs: Queue / Library / Search -->
                 <div class="content-tabs">
                     <button class="tab-btn active" onclick="switchTab('queue')" id="tab-queue">
                         <i class="fas fa-list"></i>
                         Queue <span class="badge" id="queue-count">0</span>
                     </button>
-                    <button class="tab-btn" onclick="switchTab('library')" id="tab-library">
-                        <i class="fas fa-compact-disc"></i>
-                        Library
+                    <button class="tab-btn" onclick="switchTab('search')" id="tab-search">
+                        <i class="fas fa-globe"></i>
+                        Search All
                     </button>
                 </div>
 
@@ -310,24 +361,52 @@
                     <div class="queue-empty" id="queue-empty">
                         <i class="fas fa-music"></i>
                         <h3>Queue is empty</h3>
-                        <p>Browse the library and add some songs!</p>
-                        <button class="btn btn-primary" onclick="switchTab('library')">
-                            <i class="fas fa-plus"></i> Browse Library
+                        <p>Search millions of songs to start listening!</p>
+                        <button class="btn btn-primary" onclick="switchTab('search')">
+                            <i class="fas fa-search"></i> Search Songs
                         </button>
                     </div>
                     <div class="song-list" id="queue-list"></div>
                 </div>
 
-                <!-- Library -->
-                <div class="tab-content" id="library-panel">
+                <!-- Search All (External APIs) -->
+                <div class="tab-content" id="search-panel">
                     <div class="library-search">
                         <div class="input-wrapper">
-                            <i class="fas fa-search"></i>
-                            <input type="text" id="library-search" placeholder="Search songs, artists..."
-                                   oninput="searchLibrary(this.value)">
+                            <i class="fas fa-globe"></i>
+                            <input type="text" id="external-search" 
+                                   placeholder="Search any song, artist, language..."
+                                   onkeydown="if(event.key==='Enter') searchExternal()">
+                            <button class="search-go-btn" onclick="searchExternal()" title="Search">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+                        <div class="search-sources" id="search-sources">
+                            <span class="source-badge jiosaavn"><i class="fas fa-music"></i> JioSaavn</span>
+                            <span class="source-badge spotify hidden" id="spotify-badge"><i class="fab fa-spotify"></i> Spotify</span>
                         </div>
                     </div>
-                    <div class="song-list" id="library-list"></div>
+                    <div class="search-status hidden" id="search-status">
+                        <i class="fas fa-spinner fa-spin"></i> Searching across all platforms...
+                    </div>
+                    <div class="search-empty" id="search-empty">
+                        <i class="fas fa-globe-americas" style="font-size: 3rem; color: var(--accent); margin-bottom: 1rem;"></i>
+                        <h3>Search Millions of Songs</h3>
+                        <p>Search any song in any language — Hindi, Tamil, Telugu, English, Korean, Spanish & more!</p>
+                        <div class="search-suggestions">
+                            <button class="suggestion-chip" onclick="quickSearch('Arijit Singh')">Arijit Singh</button>
+                            <button class="suggestion-chip" onclick="quickSearch('BTS')">BTS</button>
+                            <button class="suggestion-chip" onclick="quickSearch('Anirudh')">Anirudh</button>
+                            <button class="suggestion-chip" onclick="quickSearch('The Weeknd')">The Weeknd</button>
+                            <button class="suggestion-chip" onclick="quickSearch('Pritam')">Pritam</button>
+                            <button class="suggestion-chip" onclick="quickSearch('Bad Bunny')">Bad Bunny</button>
+                            <button class="suggestion-chip" onclick="quickSearch('Sid Sriram')">Sid Sriram</button>
+                            <button class="suggestion-chip" onclick="quickSearch('Taylor Swift')">Taylor Swift</button>
+                            <button class="suggestion-chip" onclick="quickSearch('AP Dhillon')">AP Dhillon</button>
+                            <button class="suggestion-chip" onclick="quickSearch('Diljit Dosanjh')">Diljit Dosanjh</button>
+                        </div>
+                    </div>
+                    <div class="song-list" id="search-results"></div>
                 </div>
             </main>
         </div>
