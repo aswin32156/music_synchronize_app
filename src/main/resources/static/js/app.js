@@ -595,8 +595,12 @@ async function checkSources() {
     }
 }
 
+const pendingAddSongs = new Set();
+
 function addToQueue(songId) {
+    if (pendingAddSongs.has(songId)) return; // prevent duplicate queuing
     const doAdd = () => {
+        pendingAddSongs.delete(songId);
         stompClient.send('/app/room.queue.add', {}, JSON.stringify({
             roomCode: currentRoom.roomCode,
             songId: songId,
@@ -607,6 +611,7 @@ function addToQueue(songId) {
     if (stompClient && stompClient.connected) {
         doAdd();
     } else {
+        pendingAddSongs.add(songId);
         showToast('Connecting... song will be added shortly.', 'info');
         waitForConnection(doAdd);
     }
@@ -874,12 +879,12 @@ function handlePlaybackUpdate(data) {
     }
 
     if (ps) {
+        isPlaying = ps.playing;
         currentSongIndex = ps.currentSongIndex;
         updatePlayPauseIcon();
 
         // Only reload audio and seek if song actually changed
         if (song && song.audioUrl && audioPlayer.getAttribute('data-song-id') !== song.id) {
-            isPlaying = ps.playing;
             currentTime = ps.currentTime || 0;
             audioPlayer.setAttribute('data-song-id', song.id);
             audioPlayer.src = song.audioUrl;
@@ -906,16 +911,15 @@ function handlePlaybackUpdate(data) {
             }
         } else {
             // Same song — only sync play/pause state, don't touch position
-            if (ps.playing && audioPlayer.paused) {
+            if (isPlaying && audioPlayer.paused) {
                 audioPlayer.play().catch(() => {});
                 startProgressTimer();
                 document.getElementById('sound-waves').classList.add('active');
-            } else if (!ps.playing && !audioPlayer.paused) {
+            } else if (!isPlaying && !audioPlayer.paused) {
                 audioPlayer.pause();
                 stopProgressTimer();
                 document.getElementById('sound-waves').classList.remove('active');
             }
-            isPlaying = ps.playing;
         }
 
         updateProgress();

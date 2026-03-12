@@ -136,7 +136,6 @@ public class WebSocketController {
             state.setCurrentSongIndex(0);
             state.setCurrentTime(0);
             state.setPlaying(true);
-            broadcastPlaybackState(roomCode);
         }
 
         ChatMessage systemMsg = new ChatMessage(
@@ -145,7 +144,9 @@ public class WebSocketController {
         );
         room.addChatMessage(systemMsg);
 
+        // broadcastRoomState first so client loads the song, then playback state triggers play
         broadcastRoomState(roomCode);
+        broadcastPlaybackState(roomCode);
         messagingTemplate.convertAndSend("/topic/room/" + roomCode + "/chat", systemMsg);
     }
 
