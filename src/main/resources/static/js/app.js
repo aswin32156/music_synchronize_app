@@ -31,7 +31,7 @@ audioPlayer.addEventListener('loadedmetadata', () => {
 });
 
 // ===== Screen Management =====
-function showScreen(screenId) {
+window.showScreen = function(screenId) {
     document.querySelectorAll('.screen').forEach(s => {
         s.classList.remove('active');
     });
@@ -46,7 +46,7 @@ function showScreen(screenId) {
 // Splash Screen
 document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => {
-        showScreen('home-screen');
+        window.showScreen('home-screen');
         fetchStats();
     }, 2500);
 });
@@ -970,6 +970,29 @@ function joinFriendRoom(roomCode) {
     showToast(`Joining room ${roomCode}...`, 'info');
     window.location.reload(); // Reload to join screen, then auto-join with code
 }
+
+// ===== Expose functions to global scope for onclick handlers =====
+window.createRoom = createRoom;
+window.joinRoom = joinRoom;
+window.leaveRoom = leaveRoom;
+window.togglePlayPause = togglePlayPause;
+window.nextSong = nextSong;
+window.previousSong = previousSong;
+window.playSongAtIndex = playSongAtIndex;
+window.seekTo = seekTo;
+window.sendChat = sendChat;
+window.switchTab = switchTab;
+window.searchExternal = searchExternal;
+window.quickSearch = quickSearch;
+window.addToQueue = addToQueue;
+window.copyRoomCode = copyRoomCode;
+window.toggleFriendsPanel = toggleFriendsPanel;
+window.sendFriendRequest = sendFriendRequest;
+window.acceptFriendRequest = acceptFriendRequest;
+window.rejectFriendRequest = rejectFriendRequest;
+window.removeFriend = removeFriend;
+window.searchFriends = searchFriends;
+window.joinFriendRoom = joinFriendRoom;
 
 // Enter key handlers for forms
 document.addEventListener('DOMContentLoaded', () => {
