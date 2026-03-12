@@ -650,6 +650,11 @@ function playSongAtIndex(index) {
         showToast('Only the host can control playback', 'info');
         return;
     }
+    // If a song is currently playing, don't interrupt it
+    if (isPlaying && currentSongIndex >= 0) {
+        showToast('Song will play when its turn comes in the queue', 'info');
+        return;
+    }
     sendPlaybackCommand('select', index);
 }
 
