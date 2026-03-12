@@ -30,6 +30,25 @@ let duration = 0;
 let connectionRetries = 0;
 let maxRetries = 5;
 let isConnecting = false;
+let pendingActions = [];
+
+function executePendingActions() {
+    while (pendingActions.length > 0) {
+        const action = pendingActions.shift();
+        try { action(); } catch(e) { console.error('Pending action error:', e); }
+    }
+}
+
+function waitForConnection(action) {
+    if (stompClient && stompClient.connected) {
+        action();
+    } else {
+        pendingActions.push(action);
+        if (currentRoom && currentRoom.roomCode && !isConnecting) {
+            connectWebSocket(currentRoom.roomCode);
+        }
+    }
+}
 
 
 // Audio player
@@ -503,20 +522,20 @@ async function checkSources() {
 }
 
 function addToQueue(songId) {
-    if (!stompClient || !stompClient.connected) {
-        showToast('Not connected to server. Attempting to reconnect...', 'error');
-        // Try to reconnect
-        if (currentRoom && currentRoom.roomCode) {
-            connectWebSocket(currentRoom.roomCode);
-        }
-        return;
+    const doAdd = () => {
+        stompClient.send('/app/room.queue.add', {}, JSON.stringify({
+            roomCode: currentRoom.roomCode,
+            songId: songId,
+            username: currentUser
+        }));
+        showToast('Song added to queue!', 'success');
+    };
+    if (stompClient && stompClient.connected) {
+        doAdd();
+    } else {
+        showToast('Connecting... song will be added shortly.', 'info');
+        waitForConnection(doAdd);
     }
-    stompClient.send('/app/room.queue.add', {}, JSON.stringify({
-        roomCode: currentRoom.roomCode,
-        songId: songId,
-        username: currentUser
-    }));
-    showToast('Song added to queue!', 'success');
 }
 
 // ===== Playback Controls =====
@@ -572,12 +591,18 @@ function seekTo(event) {
 }
 
 function sendPlaybackCommand(action, time) {
-    if (!stompClient || !stompClient.connected) return;
-    stompClient.send('/app/room.playback', {}, JSON.stringify({
-        roomCode: currentRoom.roomCode,
-        action: action,
-        currentTime: time
-    }));
+    const doSend = () => {
+        stompClient.send('/app/room.playback', {}, JSON.stringify({
+            roomCode: currentRoom.roomCode,
+            action: action,
+            currentTime: time
+        }));
+    };
+    if (stompClient && stompClient.connected) {
+        doSend();
+    } else {
+        waitForConnection(doSend);
+    }
 }
 
 // ===== Progress Timer =====
@@ -680,6 +705,9 @@ function connectWebSocket(roomCode) {
             statusEl.className = 'connection-status show connected';
             statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Connected</span>';
             setTimeout(() => statusEl.classList.remove('show'), 2000);
+
+        // Execute any pending actions
+        executePendingActions();
 
         // Subscribe to room state updates
         stompClient.subscribe('/topic/room/' + roomCode + '/state', function(msg) {
