@@ -36,6 +36,23 @@ let isConnecting = false;
 const audioPlayer = new Audio();
 audioPlayer.volume = 1.0;
 audioPlayer.crossOrigin = "anonymous"; // Enable CORS for external audio sources
+let audioUnlocked = false;
+
+// Unlock audio playback on user gesture (needed for browsers' autoplay policy)
+function unlockAudio() {
+    if (audioUnlocked) return;
+    audioPlayer.muted = true;
+    audioPlayer.play().then(() => {
+        audioPlayer.pause();
+        audioPlayer.muted = false;
+        audioPlayer.currentTime = 0;
+        audioUnlocked = true;
+        console.log('[Audio] Audio unlocked for autoplay');
+    }).catch(() => {
+        audioPlayer.muted = false;
+        console.warn('[Audio] Could not unlock audio');
+    });
+}
 
 audioPlayer.addEventListener('ended', () => {
     if (isHost) {
@@ -124,6 +141,8 @@ async function createRoom() {
         return;
     }
 
+    unlockAudio();
+
     const btn = document.getElementById('btn-create-room');
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating...';
@@ -174,6 +193,8 @@ async function joinRoom() {
         showFormError('join-error', 'Please enter a valid room code');
         return;
     }
+
+    unlockAudio();
 
     const btn = document.getElementById('btn-join-room');
     btn.disabled = true;
@@ -333,10 +354,21 @@ function updateNowPlaying(song, playbackState) {
         }
 
         if (isPlaying) {
-            audioPlayer.play().catch((err) => {
-                console.error('Failed to play audio:', err);
-                showToast('Autoplay blocked. Click play button to start.', 'info');
-            });
+            const playPromise = audioPlayer.play();
+            if (playPromise !== undefined) {
+                playPromise.catch((err) => {
+                    console.error('Failed to play audio:', err);
+                    setTimeout(() => {
+                        audioPlayer.play().catch(() => {
+                            showToast('Click anywhere to enable audio playback.', 'info');
+                            document.addEventListener('click', function resumeAudio() {
+                                audioPlayer.play().catch(() => {});
+                                document.removeEventListener('click', resumeAudio);
+                            }, { once: true });
+                        });
+                    }, 300);
+                });
+            }
             startProgressTimer();
             document.getElementById('sound-waves').classList.add('active');
         } else {
@@ -746,9 +778,13 @@ function handlePlaybackUpdate(data) {
         }
 
         if (isPlaying) {
-            audioPlayer.play().catch((err) => {
-                console.error('Failed to sync audio playback:', err);
-            });
+            const playPromise = audioPlayer.play();
+            if (playPromise !== undefined) {
+                playPromise.catch((err) => {
+                    console.error('Failed to sync audio playback:', err);
+                    setTimeout(() => audioPlayer.play().catch(() => {}), 300);
+                });
+            }
             startProgressTimer();
             document.getElementById('sound-waves').classList.add('active');
         } else {
