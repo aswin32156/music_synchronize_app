@@ -543,57 +543,78 @@ function connectWebSocket(roomCode) {
     statusEl.className = 'connection-status show';
     statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Connecting...</span>';
 
-    const socket = new SockJS('/ws');
-    stompClient = Stomp.over(socket);
-    stompClient.debug = null; // disable debug logs
-
-    stompClient.connect({}, function(frame) {
-        statusEl.className = 'connection-status show connected';
-        statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Connected</span>';
-        setTimeout(() => statusEl.classList.remove('show'), 2000);
-
-        // Subscribe to room state updates
-        stompClient.subscribe('/topic/room/' + roomCode + '/state', function(msg) {
-            const state = JSON.parse(msg.body);
-            updateRoomUI(state);
-        });
-
-        // Subscribe to playback updates
-        stompClient.subscribe('/topic/room/' + roomCode + '/playback', function(msg) {
-            const data = JSON.parse(msg.body);
-            handlePlaybackUpdate(data);
-        });
-
-        // Subscribe to chat
-        stompClient.subscribe('/topic/room/' + roomCode + '/chat', function(msg) {
-            const chatMsg = JSON.parse(msg.body);
-            appendChatMessage(chatMsg);
-        });
-
-        // Subscribe to personal sync responses
-        stompClient.subscribe('/user/queue/sync', function(msg) {
-            const state = JSON.parse(msg.body);
-            updateRoomUI(state);
-        });
-
-        // Register in the room
-        stompClient.send('/app/room.register', {}, JSON.stringify({
-            roomCode: roomCode,
-            username: currentUser
-        }));
-
-    }, function(error) {
-        statusEl.className = 'connection-status show disconnected';
-        statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Not connected to server</span>';
-        console.error('WebSocket connection error:', error);
-        console.log('Attempting to reconnect in 5 seconds...');
+    console.log('Attempting WebSocket connection to room:', roomCode);
+    console.log('Current location:', window.location.href);
+    
+    try {
+        const socket = new SockJS('/ws');
+        stompClient = Stomp.over(socket);
         
-        // Try to reconnect after delay
-        setTimeout(() => {
-            console.log('Reconnecting WebSocket...');
-            connectWebSocket(roomCode);
-        }, 5000);
-    });
+        // Enable debug for troubleshooting
+        stompClient.debug = function(str) {
+            console.log('STOMP:', str);
+        };
+
+        stompClient.connect({}, function(frame) {
+            console.log('WebSocket connected successfully!', frame);
+            statusEl.className = 'connection-status show connected';
+            statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Connected</span>';
+            setTimeout(() => statusEl.classList.remove('show'), 2000);
+
+            // Subscribe to room state updates
+            stompClient.subscribe('/topic/room/' + roomCode + '/state', function(msg) {
+                const state = JSON.parse(msg.body);
+                updateRoomUI(state);
+            });
+
+            // Subscribe to playback updates
+            stompClient.subscribe('/topic/room/' + roomCode + '/playback', function(msg) {
+                const data = JSON.parse(msg.body);
+                handlePlaybackUpdate(data);
+            });
+
+            // Subscribe to chat
+            stompClient.subscribe('/topic/room/' + roomCode + '/chat', function(msg) {
+                const chatMsg = JSON.parse(msg.body);
+                appendChatMessage(chatMsg);
+            });
+
+            // Subscribe to personal sync responses
+            stompClient.subscribe('/user/queue/sync', function(msg) {
+                const state = JSON.parse(msg.body);
+                updateRoomUI(state);
+            });
+
+            // Register in the room
+            stompClient.send('/app/room.register', {}, JSON.stringify({
+                roomCode: roomCode,
+                username: currentUser
+            }));
+
+        }, function(error) {
+            console.error('WebSocket connection failed:', error);
+            console.error('Error details:', JSON.stringify(error));
+            statusEl.className = 'connection-status show disconnected';
+            statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Not connected to server</span>';
+            
+            // Try to reconnect after delay
+            console.log('Will attempt to reconnect in 5 seconds...');
+            setTimeout(() => {
+                console.log('Reconnecting WebSocket...');
+                connectWebSocket(roomCode);
+            }, 5000);
+        });
+        
+        // Handle socket errors
+        socket.onclose = function(event) {
+            console.log('SockJS connection closed:', event);
+        };
+        
+    } catch (error) {
+        console.error('Error creating WebSocket connection:', error);
+        statusEl.className = 'connection-status show disconnected';
+        statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Connection error</span>';
+    }
 }
 
 function handlePlaybackUpdate(data) {

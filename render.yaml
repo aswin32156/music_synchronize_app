@@ -11,5 +11,7 @@ services:
         value: "-Xmx512m"
       - key: SERVER_PORT
         value: "8080"
+      - key: SPRING_PROFILES_ACTIVE
+        value: "production"
     healthCheckPath: /
     autoDeploy: true
