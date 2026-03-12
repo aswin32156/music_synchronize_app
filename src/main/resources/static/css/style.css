@@ -476,15 +476,15 @@ body {
 .input-wrapper {
     display: flex;
     align-items: center;
-    background: var(--surface);
-    border: 2px solid rgba(255,255,255,0.06);
+    background: #2a2a2a;
+    border: 1px solid #404040;
     border-radius: var(--radius-md);
     padding: 0 16px;
     transition: var(--transition);
 }
 .input-wrapper:focus-within {
     border-color: var(--accent);
-    box-shadow: 0 0 0 4px rgba(29, 185, 84, 0.1);
+    background: #2a2a2a;
 }
 .input-wrapper i {
     color: var(--text-muted);
@@ -493,13 +493,27 @@ body {
 }
 .input-wrapper input {
     flex: 1;
-    background: transparent;
+    background: transparent !important;
     border: none;
     outline: none;
-    color: var(--text-primary);
+    color: #e0e0e0 !important;
     font-family: inherit;
     font-size: 16px;
     padding: 16px 0;
+}
+.input-wrapper input:focus,
+.input-wrapper input:active {
+    background: transparent !important;
+    color: #e0e0e0 !important;
+}
+.input-wrapper input:-webkit-autofill,
+.input-wrapper input:-webkit-autofill:hover,
+.input-wrapper input:-webkit-autofill:focus,
+.input-wrapper input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 30px #2a2a2a inset !important;
+    -webkit-text-fill-color: #e0e0e0 !important;
+    transition: background-color 5000s ease-in-out 0s;
+    caret-color: #e0e0e0 !important;
 }
 .input-wrapper input::placeholder {
     color: var(--text-muted);
