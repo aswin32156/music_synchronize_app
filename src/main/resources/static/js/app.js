@@ -1,5 +1,45 @@
 // ===== MusicSync Application =====
 
+// ===== EXPOSE FUNCTIONS TO GLOBAL SCOPE FIRST (for inline onclick handlers) =====
+window.showScreen = function(screenId) {
+    console.log('showScreen called with:', screenId);
+    document.querySelectorAll('.screen').forEach(s => {
+        s.classList.remove('active');
+    });
+    setTimeout(() => {
+        const screen = document.getElementById(screenId);
+        if (screen) {
+            screen.classList.add('active');
+            console.log('Screen activated:', screenId);
+        } else {
+            console.error('Screen not found:', screenId);
+        }
+    }, 50);
+};
+
+// Forward declarations for onclick handlers - will be assigned after functions are defined
+window.createRoom = () => console.log('createRoom not ready yet');
+window.joinRoom = () => console.log('joinRoom not ready yet');
+window.leaveRoom = () => console.log('leaveRoom not ready yet');
+window.togglePlayPause = () => console.log('togglePlayPause not ready yet');
+window.nextSong = () => console.log('nextSong not ready yet');
+window.previousSong = () => console.log('previousSong notready yet');
+window.playSongAtIndex = () => console.log('playSongAtIndex not ready yet');
+window.seekTo = () => console.log('seekTo not ready yet');
+window.sendChat = () => console.log('sendChat not ready yet');
+window.switchTab = () => console.log('switchTab not ready yet');
+window.searchExternal = () => console.log('searchExternal not ready yet');
+window.quickSearch = () => console.log('quickSearch not ready yet');
+window.addToQueue = () => console.log('addToQueue not ready yet');
+window.copyRoomCode = () => console.log('copyRoomCode not ready yet');
+window.toggleFriendsPanel = () => console.log('toggleFriendsPanel not ready yet');
+window.sendFriendRequest = () => console.log('sendFriendRequest not ready yet');
+window.acceptFriendRequest = () => console.log('acceptFriendRequest not ready yet');
+window.rejectFriendRequest = () => console.log('rejectFriendRequest not ready yet');
+window.removeFriend = () => console.log('removeFriend not ready yet');
+window.searchFriends = () => console.log('searchFriends not ready yet');
+window.joinFriendRoom = () => console.log('joinFriendRoom not ready yet');
+
 // State
 let stompClient = null;
 let currentUser = null;
@@ -29,23 +69,6 @@ audioPlayer.addEventListener('loadedmetadata', () => {
     duration = audioPlayer.duration || 0;
     document.getElementById('time-total').textContent = formatTime(Math.floor(duration));
 });
-
-// ===== Screen Management =====
-window.showScreen = function(screenId) {
-    console.log('showScreen called with:', screenId);
-    document.querySelectorAll('.screen').forEach(s => {
-        s.classList.remove('active');
-    });
-    setTimeout(() => {
-        const screen = document.getElementById(screenId);
-        if (screen) {
-            screen.classList.add('active');
-            console.log('Screen activated:', screenId);
-        } else {
-            console.error('Screen not found:', screenId);
-        }
-    }, 50);
-}
 
 // Splash Screen - DISABLED, go directly to home
 document.addEventListener('DOMContentLoaded', () => {
@@ -766,7 +789,6 @@ function escapeAttr(text) {
 // ===== Friends System =====
 let currentUserId = null;
 let friendsListData = [];
-let searchTimeout = null;
 
 function toggleFriendsPanel() {
     const panel = document.getElementById('friends-panel');
