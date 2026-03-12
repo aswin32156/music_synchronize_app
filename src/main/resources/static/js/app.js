@@ -584,10 +584,15 @@ function connectWebSocket(roomCode) {
 
     }, function(error) {
         statusEl.className = 'connection-status show disconnected';
-        statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Disconnected - Reconnecting...</span>';
-        console.error('WebSocket error:', error);
-
-        setTimeout(() => connectWebSocket(roomCode), 3000);
+        statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Not connected to server</span>';
+        console.error('WebSocket connection error:', error);
+        console.log('Attempting to reconnect in 5 seconds...');
+        
+        // Try to reconnect after delay
+        setTimeout(() => {
+            console.log('Reconnecting WebSocket...');
+            connectWebSocket(roomCode);
+        }, 5000);
     });
 }
 
