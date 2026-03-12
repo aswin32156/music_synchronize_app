@@ -355,47 +355,49 @@ function updateNowPlaying(song, playbackState) {
     document.getElementById('time-total').textContent = formatTime(duration);
 
     if (playbackState) {
-        isPlaying = playbackState.playing;
-        currentTime = playbackState.currentTime || 0;
         currentSongIndex = playbackState.currentSongIndex;
         updatePlayPauseIcon();
 
-        // Load audio for the current song
+        // Load audio for the current song — only if song changed
         if (song && song.audioUrl && audioPlayer.getAttribute('data-song-id') !== song.id) {
             audioPlayer.setAttribute('data-song-id', song.id);
             audioPlayer.src = song.audioUrl;
             audioPlayer.load();
-        }
 
-        // Sync seek position
-        if (audioPlayer.src && Math.abs(audioPlayer.currentTime - currentTime) > 2) {
-            audioPlayer.currentTime = currentTime;
-        }
+            isPlaying = playbackState.playing;
+            currentTime = playbackState.currentTime || 0;
 
-        if (isPlaying) {
-            const playPromise = audioPlayer.play();
-            if (playPromise !== undefined) {
-                playPromise.catch((err) => {
-                    console.error('Failed to play audio:', err);
-                    setTimeout(() => {
-                        audioPlayer.play().catch(() => {
-                            showToast('Click anywhere to enable audio playback.', 'info');
-                            document.addEventListener('click', function resumeAudio() {
-                                audioPlayer.play().catch(() => {});
-                                document.removeEventListener('click', resumeAudio);
-                            }, { once: true });
-                        });
-                    }, 300);
-                });
+            // Sync seek position for new song
+            if (currentTime > 0) {
+                audioPlayer.currentTime = currentTime;
             }
-            startProgressTimer();
-            document.getElementById('sound-waves').classList.add('active');
-        } else {
-            audioPlayer.pause();
-            stopProgressTimer();
-            document.getElementById('sound-waves').classList.remove('active');
-        }
 
+            if (isPlaying) {
+                const playPromise = audioPlayer.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch((err) => {
+                        console.error('Failed to play audio:', err);
+                        setTimeout(() => {
+                            audioPlayer.play().catch(() => {
+                                showToast('Click anywhere to enable audio playback.', 'info');
+                                document.addEventListener('click', function resumeAudio() {
+                                    audioPlayer.play().catch(() => {});
+                                    document.removeEventListener('click', resumeAudio);
+                                }, { once: true });
+                            });
+                        }, 300);
+                    });
+                }
+                startProgressTimer();
+                document.getElementById('sound-waves').classList.add('active');
+            } else {
+                audioPlayer.pause();
+                stopProgressTimer();
+                document.getElementById('sound-waves').classList.remove('active');
+            }
+        }
+        // Same song still playing — don't touch audio, just update UI state
+        
         updateProgress();
     }
 }
