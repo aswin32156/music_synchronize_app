@@ -182,6 +182,7 @@ body {
     align-items: center;
     justify-content: center;
     flex-direction: column;
+    z-index: 1;
 }
 .splash-content {
     text-align: center;
