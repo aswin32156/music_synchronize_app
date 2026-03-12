@@ -1,6 +1,7 @@
 com\musicsync\service\JioSaavnService.class
 com\musicsync\controller\WebSocketController.class
 com\musicsync\service\MusicService.class
+com\musicsync\config\CorsConfig.class
 com\musicsync\controller\FriendController.class
 com\musicsync\config\WebSocketConfig.class
 com\musicsync\model\PlaybackState.class

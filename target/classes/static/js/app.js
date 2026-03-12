@@ -32,6 +32,7 @@ audioPlayer.addEventListener('loadedmetadata', () => {
 
 // ===== Screen Management =====
 window.showScreen = function(screenId) {
+    console.log('showScreen called with:', screenId);
     document.querySelectorAll('.screen').forEach(s => {
         s.classList.remove('active');
     });
@@ -39,16 +40,17 @@ window.showScreen = function(screenId) {
         const screen = document.getElementById(screenId);
         if (screen) {
             screen.classList.add('active');
+            console.log('Screen activated:', screenId);
+        } else {
+            console.error('Screen not found:', screenId);
         }
     }, 50);
 }
 
-// Splash Screen
+// Splash Screen - DISABLED, go directly to home
 document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => {
-        window.showScreen('home-screen');
-        fetchStats();
-    }, 2500);
+    console.log('DOM loaded, initializing...');
+    fetchStats();
 });
 
 // ===== API Calls =====
