@@ -232,43 +232,6 @@
                     <div class="users-list" id="users-list"></div>
                 </div>
 
-                <!-- Friends Section -->
-                <div class="sidebar-section friends-section">
-                    <div class="section-title clickable" onclick="toggleFriendsPanel()">
-                        <i class="fas fa-user-friends"></i>
-                        <span>Friends</span>
-                        <span class="badge" id="friend-count">0</span>
-                        <i class="fas fa-chevron-down expand-icon" id="friends-expand-icon"></i>
-                    </div>
-                    <div class="friends-panel hidden" id="friends-panel">
-                        <!-- Add Friend Search -->
-                        <div class="add-friend-search">
-                            <input type="text" id="friend-search-input" placeholder="Search username..." 
-                                   oninput="searchFriends(this.value)" maxlength="20">
-                            <div class="search-results" id="friend-search-results"></div>
-                        </div>
-                        
-                        <!-- Friend Requests -->
-                        <div class="friend-requests hidden" id="friend-requests-section">
-                            <div class="section-subtitle">
-                                <i class="fas fa-envelope"></i> Pending Requests
-                                <span class="badge" id="request-count">0</span>
-                            </div>
-                            <div id="friend-requests-list"></div>
-                        </div>
-                        
-                        <!-- Friends List -->
-                        <div class="section-subtitle">
-                            <i class="fas fa-users"></i> My Friends
-                        </div>
-                        <div class="friends-list" id="friends-list">
-                            <div class="empty-friends">
-                                <p>No friends yet. Search above to add friends!</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Chat Section -->
                 <div class="sidebar-section chat-section">
                     <div class="section-title">
