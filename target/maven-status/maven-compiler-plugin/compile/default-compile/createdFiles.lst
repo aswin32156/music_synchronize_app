@@ -1,0 +1,17 @@
+com\musicsync\dto\JoinRoomRequest.class
+com\musicsync\controller\WebSocketController.class
+com\musicsync\service\MusicService.class
+com\musicsync\model\Song.class
+com\musicsync\dto\PlaybackCommand.class
+com\musicsync\model\ChatMessage.class
+com\musicsync\config\WebSocketConfig.class
+com\musicsync\dto\CreateRoomRequest.class
+com\musicsync\model\PlaybackState.class
+com\musicsync\model\Room.class
+com\musicsync\dto\QueueRequest.class
+com\musicsync\dto\ChatRequest.class
+com\musicsync\service\RoomService.class
+com\musicsync\dto\RoomState.class
+com\musicsync\controller\RoomController.class
+com\musicsync\MusicSyncApplication.class
+com\musicsync\model\User.class
