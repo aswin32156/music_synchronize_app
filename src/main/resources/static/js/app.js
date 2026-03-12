@@ -34,26 +34,17 @@ audioPlayer.addEventListener('loadedmetadata', () => {
 function showScreen(screenId) {
     document.querySelectorAll('.screen').forEach(s => {
         s.classList.remove('active');
-        s.style.display = 'none';
     });
     setTimeout(() => {
         const screen = document.getElementById(screenId);
         if (screen) {
-            screen.style.display = 'flex';
-            requestAnimationFrame(() => screen.classList.add('active'));
+            screen.classList.add('active');
         }
     }, 50);
 }
 
 // Splash Screen
 document.addEventListener('DOMContentLoaded', () => {
-    // Initialize: hide all screens except splash
-    document.querySelectorAll('.screen').forEach(s => {
-        if (s.id !== 'splash-screen') {
-            s.style.display = 'none';
-        }
-    });
-    
     setTimeout(() => {
         showScreen('home-screen');
         fetchStats();

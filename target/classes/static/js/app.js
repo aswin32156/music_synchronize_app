@@ -38,8 +38,7 @@ function showScreen(screenId) {
     setTimeout(() => {
         const screen = document.getElementById(screenId);
         if (screen) {
-            screen.style.display = 'flex';
-            requestAnimationFrame(() => screen.classList.add('active'));
+            screen.classList.add('active');
         }
     }, 50);
 }
