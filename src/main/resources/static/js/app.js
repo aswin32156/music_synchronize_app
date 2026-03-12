@@ -418,12 +418,9 @@ function updateQueue(queue, playbackState) {
 
     queueEmpty.classList.add('hidden');
     queueList.innerHTML = queue.map((song, index) => `
-        <div class="song-item ${index === currentIdx ? 'playing' : ''}" draggable="true"
-             data-index="${index}" data-song-id="${escapeAttr(song.id)}"
-             ondragstart="onQueueDragStart(event)" ondragover="onQueueDragOver(event)"
-             ondrop="onQueueDrop(event)" ondragend="onQueueDragEnd(event)"
-             onclick="playSongAtIndex(${index})">
-            <span class="song-item-drag" title="Drag to reorder" onclick="event.stopPropagation()">
+        <div class="song-item ${index === currentIdx ? 'playing' : ''}"
+             data-index="${index}" data-song-id="${escapeAttr(song.id)}">
+            <span class="song-item-drag" title="Drag to reorder">
                 <i class="fas fa-grip-vertical"></i>
             </span>
             <span class="song-item-index">
@@ -438,55 +435,73 @@ function updateQueue(queue, playbackState) {
             </div>
             ${song.addedBy ? `<span class="song-item-added">Added by ${escapeHtml(song.addedBy)}</span>` : ''}
             <span class="song-item-duration">${formatTime(song.durationSeconds)}</span>
-            <button class="song-item-action remove" title="Remove from queue"
-                    onclick="event.stopPropagation(); removeFromQueue('${escapeAttr(song.id)}')">
+            <button class="song-item-action remove" title="Remove from queue">
                 <i class="fas fa-times"></i>
             </button>
         </div>
     `).join('');
+
+    // Attach all event listeners programmatically — avoids currentTarget/encoding issues
+    queueList.querySelectorAll('.song-item').forEach(item => {
+        const idx = parseInt(item.dataset.index);
+        const songId = item.dataset.songId;
+
+        // Play on click
+        item.addEventListener('click', () => playSongAtIndex(idx));
+
+        // Remove button
+        item.querySelector('.song-item-action.remove').addEventListener('click', e => {
+            e.stopPropagation();
+            removeFromQueue(songId);
+        });
+
+        // Drag handle — prevent click from bubbling to play
+        item.querySelector('.song-item-drag').addEventListener('click', e => e.stopPropagation());
+
+        // Drag to reorder
+        item.setAttribute('draggable', 'true');
+        item.addEventListener('dragstart', e => {
+            dragSrcIndex = idx;
+            item.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', String(idx));
+        });
+        item.addEventListener('dragover', e => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const rect = item.getBoundingClientRect();
+            item.classList.remove('drag-over-top', 'drag-over-bottom');
+            item.classList.add(e.clientY < rect.top + rect.height / 2 ? 'drag-over-top' : 'drag-over-bottom');
+        });
+        item.addEventListener('dragleave', () => {
+            item.classList.remove('drag-over-top', 'drag-over-bottom');
+        });
+        item.addEventListener('drop', e => {
+            e.preventDefault();
+            item.classList.remove('drag-over-top', 'drag-over-bottom');
+            if (dragSrcIndex !== null && dragSrcIndex !== idx) {
+                reorderQueue(dragSrcIndex, idx);
+            }
+            dragSrcIndex = null;
+        });
+        item.addEventListener('dragend', () => {
+            item.classList.remove('dragging');
+            queueList.querySelectorAll('.song-item').forEach(el =>
+                el.classList.remove('drag-over-top', 'drag-over-bottom')
+            );
+            dragSrcIndex = null;
+        });
+    });
 }
 
 // ===== Queue Drag & Drop =====
 let dragSrcIndex = null;
 
-function onQueueDragStart(e) {
-    dragSrcIndex = parseInt(e.currentTarget.dataset.index);
-    e.currentTarget.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', dragSrcIndex);
-}
-
-function onQueueDragOver(e) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    const item = e.currentTarget;
-    const rect = item.getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-    item.classList.remove('drag-over-top', 'drag-over-bottom');
-    if (e.clientY < midY) {
-        item.classList.add('drag-over-top');
-    } else {
-        item.classList.add('drag-over-bottom');
-    }
-}
-
-function onQueueDrop(e) {
-    e.preventDefault();
-    const toIndex = parseInt(e.currentTarget.dataset.index);
-    e.currentTarget.classList.remove('drag-over-top', 'drag-over-bottom');
-    if (dragSrcIndex !== null && dragSrcIndex !== toIndex) {
-        reorderQueue(dragSrcIndex, toIndex);
-    }
-    dragSrcIndex = null;
-}
-
-function onQueueDragEnd(e) {
-    e.currentTarget.classList.remove('dragging');
-    document.querySelectorAll('.song-item').forEach(el => {
-        el.classList.remove('drag-over-top', 'drag-over-bottom');
-    });
-    dragSrcIndex = null;
-}
+// Legacy inline-handler stubs (kept for safety, not used in queue rendering)
+function onQueueDragStart(e) {}
+function onQueueDragOver(e) { e.preventDefault(); }
+function onQueueDrop(e) { e.preventDefault(); }
+function onQueueDragEnd(e) {}
 
 function reorderQueue(fromIndex, toIndex) {
     waitForConnection(() => {
