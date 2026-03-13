@@ -15,11 +15,11 @@ public class MusicService {
     private final List<Song> library = new ArrayList<>();
     private final Map<String, Song> externalSongsCache = new ConcurrentHashMap<>();
     private final JioSaavnService jioSaavnService;
-    private final SpotifyService spotifyService;
+    private final YouTubeService youTubeService;
 
-    public MusicService(JioSaavnService jioSaavnService, SpotifyService spotifyService) {
+    public MusicService(JioSaavnService jioSaavnService, YouTubeService youTubeService) {
         this.jioSaavnService = jioSaavnService;
-        this.spotifyService = spotifyService;
+        this.youTubeService = youTubeService;
         initializeLibrary();
     }
 
@@ -86,8 +86,8 @@ public class MusicService {
                 externalSongsCache.put(song.getId(), song);
                 return song;
             }
-        } else if (id.startsWith("spotify_")) {
-            Song song = spotifyService.getSongById(id.substring(8));
+        } else if (id.startsWith("yt_")) {
+            Song song = youTubeService.getSongById(id.substring(3));
             if (song != null) {
                 externalSongsCache.put(song.getId(), song);
                 return song;
@@ -116,11 +116,9 @@ public class MusicService {
         List<Song> jioResults = jioSaavnService.searchSongs(query, limit);
         results.addAll(jioResults);
 
-        // Search Spotify (if configured)
-        if (spotifyService.isConfigured()) {
-            List<Song> spotifyResults = spotifyService.searchSongs(query, limit);
-            results.addAll(spotifyResults);
-        }
+        // Search YouTube Music metadata (API key or web fallback)
+        List<Song> ytResults = youTubeService.searchSongs(query, limit);
+        results.addAll(ytResults);
 
         // Cache all results so they can be retrieved by ID when adding to queue
         for (Song song : results) {
@@ -131,14 +129,17 @@ public class MusicService {
     }
 
     public Map<String, Object> getAvailableSources() {
+        boolean youtubeConfigured = youTubeService.isConfigured();
         List<String> sources = new ArrayList<>();
         sources.add("jiosaavn");
-        if (spotifyService.isConfigured()) {
-            sources.add("spotify");
+        if (youtubeConfigured) {
+            sources.add("youtube");
         }
         return Map.of(
             "sources", sources,
-            "spotifyConfigured", spotifyService.isConfigured()
+            "youtubeConfigured", youtubeConfigured,
+            "youtubeApiConfigured", youTubeService.isApiConfigured(),
+            "spotifyConfigured", false
         );
     }
 }

@@ -5,7 +5,7 @@ A real-time synchronized music listening platform where friends can create rooms
 ## ✨ Features
 
 - **🎧 Real-Time Sync** - WebSocket-based instant synchronization across all listeners
-- **🎵 Millions of Songs** - Search and play songs via JioSaavn API (all languages)
+- **🎵 Millions of Songs** - Search and play songs via JioSaavn + YouTube Music APIs
 - **👥 Room System** - Create password-protected or public rooms
 - **💬 Live Chat** - Chat while listening together
 - **👫 Friends System** - Add friends, see who's online, join their rooms
@@ -84,7 +84,7 @@ cd musicsync
 
 - **Backend:** Spring Boot 3.2.3, Java 21
 - **WebSocket:** STOMP over SockJS
-- **APIs:** JioSaavn (millions of songs), Spotify (optional)
+- **APIs:** JioSaavn (millions of songs), YouTube Data API v3 (optional)
 - **Frontend:** Vanilla JavaScript, HTML5 Audio API
 - **Deployment:** Docker, Render.com
 
@@ -113,10 +113,22 @@ Edit `src/main/resources/application.properties`:
 server.port=8080
 server.address=0.0.0.0
 
-# Optional: Add Spotify credentials for preview clips
-spotify.client-id=your_client_id
-spotify.client-secret=your_client_secret
+# Optional: Add YouTube API key for YouTube Music metadata search
+youtube.api-key=your_youtube_api_key
+
+# OR set environment variable (recommended)
+YOUTUBE_API_KEY=your_youtube_api_key
 ```
+
+### YouTube Setup (Optional, Improves Reliability)
+
+1. Create a project in Google Cloud Console
+2. Enable **YouTube Data API v3**
+3. Create an API key
+4. Set `YOUTUBE_API_KEY`
+5. Restart the app, then verify: `GET /api/music/sources` returns `"youtubeApiConfigured": true`
+
+Without an API key, MusicSync still searches YouTube using a web metadata fallback.
 
 ## 📱 Network Access
 
@@ -135,7 +147,7 @@ MIT License
 ## 🎉 Credits
 
 - JioSaavn API for music streaming
-- Spotify Web API for international songs
+- YouTube Data API v3 for YouTube Music metadata
 - Font Awesome for icons
 
 ---

@@ -113,7 +113,7 @@
     <!-- Create Room Screen -->
     <div id="create-room-screen" class="screen">
         <div class="form-container">
-            <button class="btn-back" onclick="showScreen('home-screen')">
+            <button class="btn-back" onclick="goBack()">
                 <i class="fas fa-arrow-left"></i>
             </button>
             <div class="form-card">
@@ -159,7 +159,7 @@
     <!-- Join Room Screen -->
     <div id="join-room-screen" class="screen">
         <div class="form-container">
-            <button class="btn-back" onclick="showScreen('home-screen')">
+            <button class="btn-back" onclick="goBack()">
                 <i class="fas fa-arrow-left"></i>
             </button>
             <div class="form-card">
@@ -347,8 +347,12 @@
                             </button>
                         </div>
                         <div class="search-sources" id="search-sources">
-                            <span class="source-badge jiosaavn"><i class="fas fa-music"></i> JioSaavn</span>
-                            <span class="source-badge spotify hidden" id="spotify-badge"><i class="fab fa-spotify"></i> Spotify</span>
+                            <button class="source-filter active" id="filter-jiosaavn" onclick="toggleSourceFilter('jiosaavn')" title="Toggle JioSaavn results">
+                                <i class="fas fa-music"></i> JioSaavn
+                            </button>
+                            <button class="source-filter active" id="filter-youtube" onclick="toggleSourceFilter('youtube')" title="Toggle YouTube Music results">
+                                <i class="fab fa-youtube"></i> YouTube Music
+                            </button>
                         </div>
                     </div>
                     <div class="search-status hidden" id="search-status">
@@ -371,6 +375,9 @@
                             <button class="suggestion-chip" onclick="quickSearch('Diljit Dosanjh')">Diljit Dosanjh</button>
                         </div>
                     </div>
+                    <button class="search-back-btn hidden" id="search-back-btn" onclick="goBackInSearch()">
+                        <i class="fas fa-arrow-left"></i> Back
+                    </button>
                     <div class="song-list" id="search-results"></div>
                 </div>
             </main>
@@ -402,6 +409,6 @@
         <span>Connecting...</span>
     </div>
 
-    <script src="/js/app.js?v=20260313-2"></script>
+    <script src="js/app.js?v=20260313-25"></script>
 </body>
 </html>

@@ -1299,9 +1299,57 @@ body {
     background: rgba(30, 215, 96, 0.15);
     color: #1ED760;
 }
-.source-badge.spotify {
+.source-badge.youtube {
+    background: rgba(255, 0, 0, 0.15);
+    color: #FF3B30;
+}
+
+/* Source filter toggle buttons */
+.source-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1.5px solid transparent;
+    transition: all 0.18s;
+    opacity: 0.45;
+    background: rgba(255,255,255,0.06);
+    color: var(--text-secondary, #aaa);
+    user-select: none;
+}
+.source-filter:hover {
+    opacity: 0.75;
+}
+.source-filter.active {
+    opacity: 1;
+}
+#filter-jiosaavn.active {
     background: rgba(30, 215, 96, 0.15);
-    color: #1DB954;
+    border-color: #1ED760;
+    color: #1ED760;
+}
+#filter-youtube {
+    display: inline-flex;
+}
+#filter-youtube.has-results {
+    display: inline-flex;
+}
+#filter-youtube.active {
+    background: rgba(255, 59, 48, 0.15);
+    border-color: #FF3B30;
+    color: #FF3B30;
+}
+#filter-youtube.disabled {
+    opacity: 0.28;
+    filter: grayscale(1);
+    cursor: not-allowed;
+}
+#filter-youtube.disabled:hover {
+    opacity: 0.28;
 }
 
 /* Search Status */
@@ -1353,12 +1401,194 @@ body {
     transform: scale(1.05);
 }
 
+/* Search Back Button */
+.search-back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 16px;
+    margin-bottom: 12px;
+    border-radius: 20px;
+    border: 1.5px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.05);
+    color: var(--text-secondary, #aaa);
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.18s;
+    user-select: none;
+}
+.search-back-btn:hover {
+    background: rgba(108,99,255,0.15);
+    border-color: rgba(108,99,255,0.5);
+    color: #fff;
+}
+.search-back-btn.hidden { display: none; }
+
 /* Search No Results */
 .search-no-results {
     text-align: center;
     padding: 40px 20px;
     color: var(--text-secondary);
 }
+
+/* ===== Search Result Tabs (Songs / Artists / Albums) ===== */
+
+/* Tab bar */
+.sr-tabs {
+    display: flex;
+    gap: 6px;
+    padding: 4px 0 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+}
+.sr-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 16px;
+    border-radius: 20px;
+    border: 1.5px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.04);
+    color: var(--text-secondary, #aaa);
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.18s;
+    white-space: nowrap;
+}
+.sr-tab:hover {
+    background: rgba(108,99,255,0.14);
+    border-color: rgba(108,99,255,0.4);
+    color: #fff;
+}
+.sr-tab.active {
+    background: linear-gradient(135deg, #6c63ff 0%, #a78bfa 100%);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 2px 12px rgba(108,99,255,0.4);
+}
+.sr-tab-count {
+    background: rgba(255,255,255,0.18);
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-size: 0.7rem;
+}
+.sr-tab.active .sr-tab-count {
+    background: rgba(255,255,255,0.25);
+}
+
+/* Panels */
+.sr-panel {
+    animation: srFadeIn 0.22s ease;
+}
+.sr-panel.hidden { display: none; }
+@keyframes srFadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.sr-panel-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 40px 20px;
+    color: var(--text-secondary, #aaa);
+    font-size: 0.9rem;
+}
+.sr-panel-empty i { font-size: 2rem; opacity: 0.5; }
+
+/* Grid for Artist / Album cards */
+.sr-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 14px;
+    padding: 4px 0;
+}
+.sr-card {
+    border-radius: 12px;
+    background: rgba(255,255,255,0.04);
+    overflow: hidden;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
+}
+.sr-card:hover {
+    background: rgba(108,99,255,0.13);
+    transform: translateY(-3px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+}
+.sr-card-img-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1;
+    overflow: hidden;
+}
+.sr-artist-img {
+    border-radius: 50%;
+    overflow: hidden;
+    width: 80px;
+    height: 80px;
+    margin: 14px auto 0;
+    border: 2px solid rgba(255,255,255,0.12);
+    aspect-ratio: unset;
+}
+.sr-card-img-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.sr-card-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(108,99,255,0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.18s;
+    font-size: 1.1rem;
+    color: #fff;
+}
+.sr-card:hover .sr-card-overlay { opacity: 1; }
+.sr-card-body {
+    padding: 8px 10px 10px;
+    text-align: center;
+}
+.sr-card-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-primary, #fff);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sr-card-sub {
+    font-size: 0.68rem;
+    color: var(--text-secondary, #aaa);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* Artist card centred layout */
+.sr-artist-card .sr-card-body { padding-top: 6px; }
+
+/* Song row meta (artist + album on separate lines) */
+.song-item-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    font-size: 0.77rem;
+    color: var(--text-secondary, #aaa);
+    margin-top: 2px;
+}
+.song-meta-artist { color: #b0a8ff; }
+.song-meta-album  { color: #aaa; }
+.song-meta-artist i,
+.song-meta-album  i { margin-right: 3px; font-size: 0.7rem; }
 
 /* Source Tags on results */
 .source-tag {
@@ -1374,9 +1604,9 @@ body {
     background: rgba(30, 215, 96, 0.15);
     color: #1ED760;
 }
-.source-tag.spot {
-    background: rgba(30, 185, 84, 0.15);
-    color: #1DB954;
+.source-tag.yt {
+    background: rgba(255, 59, 48, 0.15);
+    color: #FF3B30;
 }
 
 /* ===== Listeners Modal ===== */

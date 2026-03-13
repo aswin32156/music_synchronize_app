@@ -1,10 +1,12 @@
 package com.musicsync.service;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import com.musicsync.model.Song;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,10 +20,11 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.musicsync.model.Song;
 
 @Service
 public class SpotifyService {
@@ -37,11 +40,14 @@ public class SpotifyService {
     private String clientSecret;
 
     private final RestTemplate restTemplate;
+    private final JioSaavnService jioSaavnService;
+    private final Map<String, String> fallbackAudioCache = new ConcurrentHashMap<>();
     private String accessToken;
     private long tokenExpiry;
 
-    public SpotifyService() {
+    public SpotifyService(JioSaavnService jioSaavnService) {
         this.restTemplate = new RestTemplate();
+        this.jioSaavnService = jioSaavnService;
     }
 
     public boolean isConfigured() {
@@ -105,13 +111,11 @@ public class SpotifyService {
 
     private Song parseTrack(JsonObject track) {
         try {
-            String id = "spotify_" + getStringField(track, "id");
+            String rawId = getStringField(track, "id");
+            if (rawId == null || rawId.isEmpty()) return null;
+            String id = "spotify_" + rawId;
             String title = getStringField(track, "name");
             if (title == null || title.isEmpty()) return null;
-
-            // Preview URL (30-second clip, available for free)
-            String previewUrl = getStringField(track, "preview_url");
-            if (previewUrl == null || previewUrl.isEmpty()) return null;
 
             // Artists
             List<String> artistNames = new ArrayList<>();
@@ -122,6 +126,14 @@ public class SpotifyService {
                 }
             }
             String artist = artistNames.isEmpty() ? "Unknown Artist" : String.join(", ", artistNames);
+            String primaryArtist = artistNames.isEmpty() ? "" : artistNames.get(0);
+
+            // Prefer Spotify preview URL; fallback to JioSaavn audio when preview is unavailable.
+            String audioUrl = getStringField(track, "preview_url");
+            if (audioUrl == null || audioUrl.isEmpty()) {
+                audioUrl = resolveFallbackAudio(rawId, title, primaryArtist);
+            }
+            if (audioUrl == null || audioUrl.isEmpty()) return null;
 
             // Album
             String album = "";
@@ -146,11 +158,42 @@ public class SpotifyService {
                 duration = track.get("duration_ms").getAsInt() / 1000;
             }
 
-            return new Song(id, title, artist, album, coverUrl, duration, previewUrl);
+            return new Song(id, title, artist, album, coverUrl, duration, audioUrl);
         } catch (Exception e) {
             log.debug("Failed to parse Spotify track: {}", e.getMessage());
             return null;
         }
+    }
+
+    private String resolveFallbackAudio(String spotifyTrackId, String title, String primaryArtist) {
+        String cached = fallbackAudioCache.get(spotifyTrackId);
+        if (cached != null) {
+            return cached;
+        }
+
+        try {
+            String query = (title == null ? "" : title.trim())
+                    + " "
+                    + (primaryArtist == null ? "" : primaryArtist.trim());
+            if (query.isBlank()) {
+                fallbackAudioCache.put(spotifyTrackId, "");
+                return "";
+            }
+
+            List<Song> candidates = jioSaavnService.searchSongs(query, 1);
+            if (!candidates.isEmpty()) {
+                String fallbackUrl = candidates.get(0).getAudioUrl();
+                if (fallbackUrl != null && !fallbackUrl.isBlank()) {
+                    fallbackAudioCache.put(spotifyTrackId, fallbackUrl);
+                    return fallbackUrl;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Spotify fallback audio lookup failed for '{}': {}", spotifyTrackId, e.getMessage());
+        }
+
+        fallbackAudioCache.put(spotifyTrackId, "");
+        return "";
     }
 
     private synchronized void ensureValidToken() {

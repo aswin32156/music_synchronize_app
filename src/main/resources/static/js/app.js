@@ -1,11 +1,21 @@
 // ===== MusicSync Application =====
 
-// ===== EXPOSE FUNCTIONS TO GLOBAL SCOPE FIRST (for inline onclick handlers) =====
-window.showScreen = function(screenId) {
+// ===== SCREEN NAVIGATION WITH HISTORY =====
+const screenHistory = [];
+
+window.showScreen = function(screenId, pushHistory = true) {
     console.log('showScreen called with:', screenId);
-    document.querySelectorAll('.screen').forEach(s => {
-        s.classList.remove('active');
-    });
+    const current = document.querySelector('.screen.active');
+    const currentId = current ? current.id : null;
+    // Push current to history so we can go back
+    // Skip if: not pushing, no current screen, same destination, going home already in history, or inside room
+    if (pushHistory && currentId && currentId !== screenId && currentId !== 'room-screen') {
+        // Avoid consecutive duplicates in the stack
+        if (screenHistory[screenHistory.length - 1] !== currentId) {
+            screenHistory.push(currentId);
+        }
+    }
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     setTimeout(() => {
         const screen = document.getElementById(screenId);
         if (screen) {
@@ -15,7 +25,38 @@ window.showScreen = function(screenId) {
             console.error('Screen not found:', screenId);
         }
     }, 50);
+    // Update browser history so the OS/browser back button works
+    if (pushHistory) {
+        history.pushState({ screenId }, '', '#' + screenId);
+    }
+    _updateBackBtnVisibility();
 };
+
+window.goBack = function() {
+    if (screenHistory.length > 0) {
+        const prev = screenHistory.pop();
+        showScreen(prev, false);
+        // Keep browser URL in sync without adding a new history entry
+        history.replaceState({ screenId: prev }, '', '#' + prev);
+    } else {
+        showScreen('home-screen', false);
+        history.replaceState({ screenId: 'home-screen' }, '', '#home-screen');
+    }
+};
+
+function _updateBackBtnVisibility() {
+    // show/hide the room-level back btn (not applicable in room-screen)
+    // The main back buttons are per-screen (create/join already have them)
+}
+
+// Handle browser back button
+window.addEventListener('popstate', (e) => {
+    if (e.state && e.state.screenId) {
+        showScreen(e.state.screenId, false);
+    } else {
+        goBack();
+    }
+});
 
 // State
 let stompClient = null;
@@ -33,6 +74,8 @@ let connectionRetries = 0;
 let maxRetries = 5;
 let isConnecting = false;
 let pendingActions = [];
+let roomStateRefreshTimeout = null;
+let roomStatePollInterval = null;
 
 function executePendingActions() {
     while (pendingActions.length > 0) {
@@ -49,6 +92,54 @@ function waitForConnection(action) {
         if (currentRoom && currentRoom.roomCode && !isConnecting) {
             connectWebSocket(currentRoom.roomCode);
         }
+    }
+}
+
+function getListenerCount(users) {
+    return (Array.isArray(users) ? users : []).filter(user => !user.host).length;
+}
+
+async function refreshRoomStateOnce(roomCode) {
+    if (!roomCode) return;
+    try {
+        const res = await fetch('/api/rooms/' + encodeURIComponent(roomCode));
+        if (!res.ok) return;
+        const latest = await res.json();
+        updateRoomUI(latest);
+    } catch (e) {
+        // Ignore transient polling errors; realtime updates keep the normal flow.
+    }
+}
+
+function scheduleRoomStateRefresh(delayMs = 150) {
+    if (!currentRoom || !currentRoom.roomCode) return;
+
+    if (roomStateRefreshTimeout) {
+        clearTimeout(roomStateRefreshTimeout);
+    }
+
+    roomStateRefreshTimeout = setTimeout(() => {
+        roomStateRefreshTimeout = null;
+        refreshRoomStateOnce(currentRoom.roomCode);
+    }, delayMs);
+}
+
+function startRoomStatePolling(roomCode) {
+    if (!roomCode) return;
+    stopRoomStatePolling();
+    roomStatePollInterval = setInterval(() => {
+        refreshRoomStateOnce(roomCode);
+    }, 4000);
+}
+
+function stopRoomStatePolling() {
+    if (roomStatePollInterval) {
+        clearInterval(roomStatePollInterval);
+        roomStatePollInterval = null;
+    }
+    if (roomStateRefreshTimeout) {
+        clearTimeout(roomStateRefreshTimeout);
+        roomStateRefreshTimeout = null;
     }
 }
 
@@ -264,6 +355,9 @@ function enterRoom(roomState) {
     console.log('[Room] Checking sources...');
     checkSources();
 
+    startRoomStatePolling(roomState.roomCode);
+    scheduleRoomStateRefresh(0);
+
     // Show/hide host controls
     const hostIndicator = document.getElementById('host-indicator');
     if (isHost) {
@@ -324,7 +418,7 @@ function updateUsersList(users) {
     const list = document.getElementById('users-list');
     const countBadge = document.getElementById('user-count');
     if (countBadge) {
-        countBadge.textContent = currentUsers.length;
+        countBadge.textContent = getListenerCount(currentUsers);
     }
 
     if (currentRoom) {
@@ -369,15 +463,17 @@ function renderListenersModal() {
     if (!title || !list) return;
 
     const listeners = getActiveListeners();
-    const count = listeners.length;
+    const count = getListenerCount(listeners);
     title.textContent = count === 1 ? '1 person is listening now' : `${count} people are listening now`;
 
-    if (count === 0) {
+    const listenerRows = listeners.filter(user => !user.host);
+
+    if (listenerRows.length === 0) {
         list.innerHTML = '<div class="listeners-empty">No listeners are connected right now.</div>';
         return;
     }
 
-    list.innerHTML = listeners.map(user => `
+    list.innerHTML = listenerRows.map(user => `
         <div class="listener-row">
             <div class="listener-avatar" style="background: ${escapeAttr(user.avatarColor || '#1DB954')}">
                 ${escapeHtml((user.username || '?').charAt(0).toUpperCase())}
@@ -604,10 +700,154 @@ function removeFromQueue(songId) {
     showToast('Song removed from queue', 'success');
 }
 
-// ===== External Search (JioSaavn + Spotify) =====
+// ===== External Search (JioSaavn + YouTube Music) =====
 let searchTimeout = null;
+let _allSearchResults = []; // cache last results for filter re-render
+let _activeFilters = new Set(['jiosaavn', 'youtube']);
+let isYouTubeConfigured = false;
+let currentSearchResultTab = 'songs';
+const searchViewHistory = [];
 
-async function searchExternal() {
+function cloneSearchResults(results) {
+    return Array.isArray(results) ? results.map(song => ({ ...song })) : [];
+}
+
+function getFilteredSearchResults(results = _allSearchResults) {
+    return (Array.isArray(results) ? results : []).filter(song => {
+        if (song.id.startsWith('jio_')) return _activeFilters.has('jiosaavn');
+        if (song.id.startsWith('yt_')) return _activeFilters.has('youtube');
+        return true;
+    });
+}
+
+function renderEmptyFilteredResults(resultsList) {
+    resultsList.innerHTML = `<div class="search-no-results">
+        <i class="fas fa-filter" style="font-size:2rem;color:#666;margin-bottom:.5rem"></i>
+        <p>No results for the selected source.</p>
+        <p style="font-size:.8rem;color:#888">Toggle a source filter above to see results.</p>
+    </div>`;
+}
+
+function updateSourceFilterButtons(hasYouTube = false) {
+    const jioBtn = document.getElementById('filter-jiosaavn');
+    const youTubeBtn = document.getElementById('filter-youtube');
+    if (jioBtn) {
+        jioBtn.classList.toggle('active', _activeFilters.has('jiosaavn'));
+    }
+    if (youTubeBtn) {
+        youTubeBtn.classList.toggle('disabled', !isYouTubeConfigured);
+        youTubeBtn.classList.toggle('active', _activeFilters.has('youtube'));
+        youTubeBtn.classList.toggle('has-results', !!hasYouTube);
+    }
+}
+
+function buildSearchViewSnapshot(mode) {
+    const input = document.getElementById('external-search');
+    const youTubeBtn = document.getElementById('filter-youtube');
+    return {
+        mode,
+        query: input ? input.value : '',
+        allResults: cloneSearchResults(_allSearchResults),
+        activeFilters: Array.from(_activeFilters),
+        currentResultTab: currentSearchResultTab,
+        hasYouTube: !!youTubeBtn && youTubeBtn.classList.contains('has-results')
+    };
+}
+
+function rememberSearchView(mode) {
+    const snapshot = buildSearchViewSnapshot(mode);
+    const last = searchViewHistory[searchViewHistory.length - 1];
+    if (
+        last
+        && last.mode === snapshot.mode
+        && last.query === snapshot.query
+        && last.currentResultTab === snapshot.currentResultTab
+        && last.hasYouTube === snapshot.hasYouTube
+        && last.activeFilters.join('|') === snapshot.activeFilters.join('|')
+        && last.allResults.length === snapshot.allResults.length
+    ) {
+        return;
+    }
+    searchViewHistory.push(snapshot);
+}
+
+function restoreSearchView(snapshot) {
+    const input = document.getElementById('external-search');
+    const statusEl = document.getElementById('search-status');
+    const emptyEl = document.getElementById('search-empty');
+    const resultsList = document.getElementById('search-results');
+
+    if (input) input.value = snapshot.query || '';
+    if (statusEl) statusEl.classList.add('hidden');
+
+    currentSearchResultTab = snapshot.currentResultTab || 'songs';
+    _activeFilters = new Set(
+        Array.isArray(snapshot.activeFilters) && snapshot.activeFilters.length > 0
+            ? snapshot.activeFilters
+            : ['jiosaavn']
+    );
+
+    if (!isYouTubeConfigured) {
+        _activeFilters.delete('youtube');
+        if (!_activeFilters.has('jiosaavn')) {
+            _activeFilters.add('jiosaavn');
+        }
+    }
+
+    if (snapshot.mode === 'results') {
+        _allSearchResults = cloneSearchResults(snapshot.allResults);
+        if (emptyEl) emptyEl.classList.add('hidden');
+        updateSourceFilterButtons(snapshot.hasYouTube);
+        if (resultsList) {
+            const filtered = getFilteredSearchResults(_allSearchResults);
+            if (filtered.length === 0) {
+                renderEmptyFilteredResults(resultsList);
+            } else {
+                renderSearchResults(filtered);
+            }
+        }
+    } else {
+        _allSearchResults = [];
+        currentSearchResultTab = 'songs';
+        if (resultsList) resultsList.innerHTML = '';
+        if (emptyEl) emptyEl.classList.remove('hidden');
+        updateSourceFilterButtons(false);
+    }
+
+    _updateSearchBackBtn();
+}
+
+window.toggleSourceFilter = function(source) {
+    const btn = document.getElementById('filter-' + source);
+    if (!btn) return;
+
+    if (source === 'youtube' && !isYouTubeConfigured) {
+        showToast('YouTube source is currently unavailable on server.', 'info');
+        return;
+    }
+
+    if (_activeFilters.has(source)) {
+        // keep at least one source active
+        if (_activeFilters.size === 1) return;
+        _activeFilters.delete(source);
+    } else {
+        _activeFilters.add(source);
+    }
+    updateSourceFilterButtons(_allSearchResults.some(song => song.id.startsWith('yt_')));
+    if (_allSearchResults.length > 0) {
+        const filtered = getFilteredSearchResults(_allSearchResults);
+        const resultsList = document.getElementById('search-results');
+        if (filtered.length === 0) {
+            renderEmptyFilteredResults(resultsList);
+        } else {
+            renderSearchResults(filtered);
+        }
+    }
+};
+
+async function searchExternal(preserveCurrentView = true) {
+    await checkSources();
+
     const input = document.getElementById('external-search');
     const query = input.value.trim();
     if (!query) {
@@ -619,9 +859,21 @@ async function searchExternal() {
     const emptyEl = document.getElementById('search-empty');
     const resultsList = document.getElementById('search-results');
 
+    if (preserveCurrentView && document.querySelector('#tab-search.active')) {
+        if (_allSearchResults.length > 0) {
+            rememberSearchView('results');
+        } else if (emptyEl && !emptyEl.classList.contains('hidden')) {
+            rememberSearchView('suggestions');
+        }
+    }
+
+    _allSearchResults = [];
+    currentSearchResultTab = 'songs';
     statusEl.classList.remove('hidden');
     emptyEl.classList.add('hidden');
     resultsList.innerHTML = '';
+    const searchBackBtn = document.getElementById('search-back-btn');
+    if (searchBackBtn) searchBackBtn.classList.add('hidden');
 
     try {
         const res = await fetch('/api/music/search/external?q=' + encodeURIComponent(query) + '&limit=20');
@@ -640,7 +892,12 @@ async function searchExternal() {
             return;
         }
 
-        renderSearchResults(songs);
+        _allSearchResults = cloneSearchResults(songs);
+        updateSourceFilterButtons(songs.some(s => s.id.startsWith('yt_')));
+
+        const filtered = getFilteredSearchResults(_allSearchResults);
+        renderSearchResults(filtered);
+        _updateSearchBackBtn();
     } catch (e) {
         statusEl.classList.add('hidden');
         showToast('Search failed: ' + e.message, 'error');
@@ -648,26 +905,86 @@ async function searchExternal() {
     }
 }
 
+window.clearSearch = function() {
+    _allSearchResults = [];
+    currentSearchResultTab = 'songs';
+    searchViewHistory.length = 0;
+    const input = document.getElementById('external-search');
+    if (input) input.value = '';
+    const resultsList = document.getElementById('search-results');
+    if (resultsList) resultsList.innerHTML = '';
+    const emptyEl = document.getElementById('search-empty');
+    if (emptyEl) emptyEl.classList.remove('hidden');
+    updateSourceFilterButtons(false);
+    if (input) input.focus();
+    _updateSearchBackBtn();
+};
+
 function quickSearch(query) {
     document.getElementById('external-search').value = query;
-    searchExternal();
+    searchExternal(true);
 }
 
 function renderSearchResults(songs) {
     const list = document.getElementById('search-results');
-    list.innerHTML = songs.map(song => {
+    const fallbackImg = "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22><rect fill=%22%23333%22 width=%2260%22 height=%2260%22/><text x=%2230%22 y=%2236%22 fill=%22%23888%22 text-anchor=%22middle%22 font-size=%2224%22>♪</text></svg>";
+
+    // Collect unique artists and albums
+    const artistMap = new Map();
+    const albumMap = new Map();
+    songs.forEach(song => {
+        const artistName = (song.artist || '').trim();
+        if (artistName && artistName !== 'Unknown Artist') {
+            if (!artistMap.has(artistName)) {
+                artistMap.set(artistName, { name: artistName, cover: song.coverUrl, count: 0 });
+            }
+            artistMap.get(artistName).count++;
+        }
+        const albumName = (song.album || '').trim();
+        if (albumName) {
+            const key = albumName + '||' + artistName;
+            if (!albumMap.has(key)) {
+                albumMap.set(key, { name: albumName, artist: artistName, cover: song.coverUrl, count: 0 });
+            }
+            albumMap.get(key).count++;
+        }
+    });
+
+    const activeResultTab = ['songs', 'artists', 'albums'].includes(currentSearchResultTab)
+        ? currentSearchResultTab
+        : 'songs';
+
+    // ── Tab bar ───────────────────────────────────────────────
+    let html = `<div class="sr-tabs">
+        <button class="sr-tab${activeResultTab === 'songs' ? ' active' : ''}" data-tab="songs" onclick="switchSearchTab('songs')">
+            <i class="fas fa-music"></i> Songs <span class="sr-tab-count">${songs.length}</span>
+        </button>
+        <button class="sr-tab${activeResultTab === 'artists' ? ' active' : ''}" data-tab="artists" onclick="switchSearchTab('artists')">
+            <i class="fas fa-user"></i> Artists <span class="sr-tab-count">${artistMap.size}</span>
+        </button>
+        <button class="sr-tab${activeResultTab === 'albums' ? ' active' : ''}" data-tab="albums" onclick="switchSearchTab('albums')">
+            <i class="fas fa-record-vinyl"></i> Albums <span class="sr-tab-count">${albumMap.size}</span>
+        </button>
+    </div>`;
+
+    // ── Songs panel ───────────────────────────────────────────
+    html += `<div class="sr-panel${activeResultTab === 'songs' ? '' : ' hidden'}" id="sr-panel-songs">`;
+    html += songs.map(song => {
         const sourceIcon = song.id.startsWith('jio_')
             ? '<span class="source-tag jio">JioSaavn</span>'
-            : song.id.startsWith('spotify_')
-            ? '<span class="source-tag spot">Spotify</span>'
+            : song.id.startsWith('yt_')
+            ? '<span class="source-tag yt">YouTube</span>'
             : '';
+        const albumPart = song.album ? ` <span class="song-meta-album"><i class="fas fa-compact-disc"></i> ${escapeHtml(song.album)}</span>` : '';
         return `
         <div class="song-item">
             <img class="song-item-cover" src="${escapeAttr(song.coverUrl)}" alt="${escapeAttr(song.title)}"
-                 onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2250%22 height=%2250%22><rect fill=%22%23333%22 width=%2250%22 height=%2250%22/><text x=%2225%22 y=%2230%22 fill=%22%23888%22 text-anchor=%22middle%22 font-size=%2220%22>♪</text></svg>'">
+                 onerror="this.src='${fallbackImg}'">
             <div class="song-item-info">
                 <div class="song-item-title">${escapeHtml(song.title)}</div>
-                <div class="song-item-artist">${escapeHtml(song.artist)} · ${escapeHtml(song.album)}</div>
+                <div class="song-item-meta">
+                    <span class="song-meta-artist"><i class="fas fa-user"></i> ${escapeHtml(song.artist)}</span>${albumPart}
+                </div>
             </div>
             ${sourceIcon}
             <span class="song-item-duration">${formatTime(song.durationSeconds)}</span>
@@ -676,15 +993,95 @@ function renderSearchResults(songs) {
             </button>
         </div>`;
     }).join('');
+    html += `</div>`;
+
+    // ── Artists panel ─────────────────────────────────────────
+    html += `<div class="sr-panel${activeResultTab === 'artists' ? '' : ' hidden'}" id="sr-panel-artists">`;
+    if (artistMap.size === 0) {
+        html += `<div class="sr-panel-empty"><i class="fas fa-user-slash"></i><p>No artists found</p></div>`;
+    } else {
+        html += `<div class="sr-grid">`;
+        artistMap.forEach(a => {
+            html += `<div class="sr-card sr-artist-card" onclick="quickSearch('${escapeAttr(a.name)}')" title="Search songs by ${escapeAttr(a.name)}">
+                <div class="sr-card-img-wrap sr-artist-img">
+                    <img src="${escapeAttr(a.cover)}" alt="${escapeAttr(a.name)}" onerror="this.src='${fallbackImg}'">
+                    <div class="sr-card-overlay"><i class="fas fa-search"></i></div>
+                </div>
+                <div class="sr-card-body">
+                    <div class="sr-card-title">${escapeHtml(a.name)}</div>
+                    <div class="sr-card-sub">${a.count} song${a.count !== 1 ? 's' : ''}</div>
+                </div>
+            </div>`;
+        });
+        html += `</div>`;
+    }
+    html += `</div>`;
+
+    // ── Albums panel ──────────────────────────────────────────
+    html += `<div class="sr-panel${activeResultTab === 'albums' ? '' : ' hidden'}" id="sr-panel-albums">`;
+    if (albumMap.size === 0) {
+        html += `<div class="sr-panel-empty"><i class="fas fa-compact-disc"></i><p>No albums found</p></div>`;
+    } else {
+        html += `<div class="sr-grid">`;
+        albumMap.forEach(al => {
+            html += `<div class="sr-card sr-album-card" onclick="quickSearch('${escapeAttr(al.name)}')" title="Search songs from ${escapeAttr(al.name)}">
+                <div class="sr-card-img-wrap">
+                    <img src="${escapeAttr(al.cover)}" alt="${escapeAttr(al.name)}" onerror="this.src='${fallbackImg}'">
+                    <div class="sr-card-overlay"><i class="fas fa-search"></i></div>
+                </div>
+                <div class="sr-card-body">
+                    <div class="sr-card-title">${escapeHtml(al.name)}</div>
+                    <div class="sr-card-sub">${escapeHtml(al.artist)}</div>
+                </div>
+            </div>`;
+        });
+        html += `</div>`;
+    }
+    html += `</div>`;
+
+    list.innerHTML = html;
 }
+
+window.switchSearchTab = function(tab, pushHistory = true) {
+    if (pushHistory && _allSearchResults.length > 0 && currentSearchResultTab && currentSearchResultTab !== tab) {
+        rememberSearchView('results');
+    }
+    currentSearchResultTab = tab;
+    document.querySelectorAll('.sr-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tab);
+    });
+    document.querySelectorAll('.sr-panel').forEach(panel => {
+        panel.classList.toggle('hidden', !panel.id.endsWith(tab));
+    });
+    _updateSearchBackBtn();
+};
 
 async function checkSources() {
     try {
         const res = await fetch('/api/music/sources');
         const data = await res.json();
-        if (data.spotifyConfigured) {
-            const badge = document.getElementById('spotify-badge');
-            if (badge) badge.classList.remove('hidden');
+        isYouTubeConfigured = !!(data.youtubeConfigured ?? data.spotifyConfigured);
+
+        if (isYouTubeConfigured) {
+            if (!_activeFilters.has('youtube')) {
+                _activeFilters.add('youtube');
+            }
+        } else {
+            _activeFilters.delete('youtube');
+            _activeFilters.add('jiosaavn');
+        }
+
+        const hasYouTubeInResults = _allSearchResults.some(song => song.id.startsWith('yt_'));
+        updateSourceFilterButtons(hasYouTubeInResults);
+
+        if (_allSearchResults.length > 0) {
+            const resultsList = document.getElementById('search-results');
+            const filtered = getFilteredSearchResults(_allSearchResults);
+            if (filtered.length === 0) {
+                renderEmptyFilteredResults(resultsList);
+            } else {
+                renderSearchResults(filtered);
+            }
         }
     } catch (e) {
         console.log('Could not check sources:', e);
@@ -765,8 +1162,26 @@ function seekTo(event) {
     if (!isHost) return;
     const bar = document.getElementById('progress-bar');
     const rect = bar.getBoundingClientRect();
-    const pos = (event.clientX - rect.left) / rect.width;
-    const seekTime = pos * (audioPlayer.duration || duration);
+    const pointerX = typeof event.clientX === 'number'
+        ? event.clientX
+        : (event.touches && event.touches[0] ? event.touches[0].clientX : null);
+    if (pointerX === null) return;
+
+    const pos = Math.max(0, Math.min(1, (pointerX - rect.left) / rect.width));
+    const totalDuration = audioPlayer.duration || duration;
+    if (!totalDuration || totalDuration <= 0) return;
+
+    const seekTime = pos * totalDuration;
+
+    // Apply immediately for host responsiveness; room sync keeps everyone aligned.
+    currentTime = seekTime;
+    try {
+        audioPlayer.currentTime = seekTime;
+    } catch (err) {
+        console.warn('[Playback] Failed to apply local seek:', err);
+    }
+    updateProgress();
+
     sendPlaybackCommand('seek', seekTime);
 }
 
@@ -919,6 +1334,11 @@ function connectWebSocket(roomCode) {
             username: currentUser
         }));
 
+        // Explicit sync helps late joiners and listener count stay aligned.
+        stompClient.send('/app/room.sync', {}, JSON.stringify({
+            roomCode: roomCode
+        }));
+
     }, function(error) {
         console.error('[WebSocket] Connection failed:', error);
         console.error('[WebSocket] Error details:', {
@@ -1006,7 +1426,24 @@ function handlePlaybackUpdate(data) {
                 document.getElementById('sound-waves').classList.remove('active');
             }
         } else {
-            // Same song — only sync play/pause state, don't touch position
+            // Same song — still sync position so seek works across clients.
+            const serverTime = Number(ps.currentTime);
+            if (Number.isFinite(serverTime) && serverTime >= 0) {
+                const knownDuration = (Number.isFinite(audioPlayer.duration) && audioPlayer.duration > 0)
+                    ? audioPlayer.duration
+                    : duration;
+                const clampedTime = knownDuration > 0 ? Math.min(serverTime, knownDuration) : serverTime;
+
+                currentTime = clampedTime;
+                if (Math.abs((audioPlayer.currentTime || 0) - clampedTime) > 0.7) {
+                    try {
+                        audioPlayer.currentTime = clampedTime;
+                    } catch (err) {
+                        console.warn('[Playback] Failed to apply synced time:', err);
+                    }
+                }
+            }
+
             if (isPlaying && audioPlayer.paused) {
                 audioPlayer.play().catch(() => {});
                 startProgressTimer();
@@ -1057,6 +1494,8 @@ function appendChatMessage(msg) {
     const container = document.getElementById('chat-messages');
 
     if (msg.type === 'system') {
+        const text = typeof msg.message === 'string' ? msg.message.trim() : '';
+
         container.innerHTML += `
             <div class="chat-msg system">
                 <div class="chat-msg-content">
@@ -1064,6 +1503,10 @@ function appendChatMessage(msg) {
                 </div>
             </div>
         `;
+
+        if (/joined the room/i.test(text) || /left the room/i.test(text)) {
+            scheduleRoomStateRefresh(120);
+        }
     } else {
         const initial = msg.username ? msg.username.charAt(0).toUpperCase() : '?';
         const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
@@ -1085,12 +1528,55 @@ function appendChatMessage(msg) {
 }
 
 // ===== UI Helpers =====
-function switchTab(tabName) {
+const tabHistory = [];
+
+function switchTab(tabName, pushHistory = true) {
+    const current = document.querySelector('.tab-btn.active');
+    const currentTab = current ? current.id.replace('tab-', '') : null;
+    if (pushHistory && currentTab && currentTab !== tabName) {
+        if (tabHistory[tabHistory.length - 1] !== currentTab) {
+            tabHistory.push(currentTab);
+        }
+    }
     document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(p => p.classList.remove('active'));
-
     document.getElementById('tab-' + tabName).classList.add('active');
     document.getElementById(tabName + '-panel').classList.add('active');
+    _updateSearchBackBtn();
+}
+
+function _updateSearchBackBtn() {
+    const btn = document.getElementById('search-back-btn');
+    if (!btn) return;
+    const onSearchTab = !!document.querySelector('#tab-search.active');
+    if (onSearchTab && (tabHistory.length > 0 || searchViewHistory.length > 0 || _allSearchResults.length > 0)) {
+        btn.classList.remove('hidden');
+    } else {
+        btn.classList.add('hidden');
+    }
+}
+
+function goBackInSearch() {
+    if (searchViewHistory.length > 0) {
+        restoreSearchView(searchViewHistory.pop());
+        return;
+    }
+
+    if (_allSearchResults.length > 0) {
+        const input = document.getElementById('external-search');
+        const resultsList = document.getElementById('search-results');
+        const emptyEl = document.getElementById('search-empty');
+        _allSearchResults = [];
+        currentSearchResultTab = 'songs';
+        if (resultsList) resultsList.innerHTML = '';
+        if (emptyEl) emptyEl.classList.remove('hidden');
+        updateSourceFilterButtons(false);
+        if (input) input.focus();
+    } else {
+        const prev = tabHistory.length > 0 ? tabHistory.pop() : 'queue';
+        switchTab(prev, false);
+    }
+    _updateSearchBackBtn();
 }
 
 function copyRoomCode() {
@@ -1111,6 +1597,7 @@ function leaveRoom() {
         stompClient.disconnect();
         stompClient = null;
     }
+    stopRoomStatePolling();
     audioPlayer.pause();
     audioPlayer.src = '';
     audioPlayer.removeAttribute('data-song-id');
@@ -1123,7 +1610,13 @@ function leaveRoom() {
     stopProgressTimer();
     closeListenersModal();
 
-    showScreen('home-screen');
+    tabHistory.length = 0;
+    currentSearchResultTab = 'songs';
+    searchViewHistory.length = 0;
+    // Clear navigation history so back always returns to home after leaving a room
+    screenHistory.length = 0;
+    showScreen('home-screen', false);
+    history.replaceState({ screenId: 'home-screen' }, '', '#home-screen');
     fetchStats();
     showToast('Left the room', 'info');
 }
@@ -1176,6 +1669,7 @@ window.playSongAtIndex = playSongAtIndex;
 window.seekTo = seekTo;
 window.sendChat = sendChat;
 window.switchTab = switchTab;
+window.goBackInSearch = goBackInSearch;
 window.searchExternal = searchExternal;
 window.quickSearch = quickSearch;
 window.addToQueue = addToQueue;
