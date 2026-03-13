@@ -20,6 +20,7 @@ window.showScreen = function(screenId) {
 // State
 let stompClient = null;
 let currentUser = null;
+let currentUserId = null;
 let currentRoom = null;
 let isHost = false;
 let isPlaying = false;
@@ -274,7 +275,11 @@ function enterRoom(roomState) {
 }
 
 function updateRoomUI(state) {
+    if (!state || typeof state !== 'object') return;
+
     currentRoom = state;
+    const roomUsers = Array.isArray(state.users) ? state.users : [];
+    const roomQueue = Array.isArray(state.queue) ? state.queue : [];
 
     // Room info
     document.getElementById('room-name-display').textContent = state.roomName || 'Music Room';
@@ -282,7 +287,7 @@ function updateRoomUI(state) {
 
     // Set current user ID (extract from users list)
     if (!currentUserId && currentUser) {
-        const user = state.users.find(u => u.username === currentUser);
+        const user = roomUsers.find(u => u.username === currentUser);
         if (user) {
             currentUserId = user.id;
             loadFriends();
@@ -296,10 +301,10 @@ function updateRoomUI(state) {
     }
 
     // Users
-    updateUsersList(state.users);
+    updateUsersList(roomUsers);
 
     // Queue
-    updateQueue(state.queue, state.playbackState);
+    updateQueue(roomQueue, state.playbackState);
 
     // Playback
     if (state.currentSong) {
@@ -314,11 +319,20 @@ function updateRoomUI(state) {
 }
 
 function updateUsersList(users) {
-    currentUsers = Array.isArray(users) ? users : [];
-    const list = document.getElementById('users-list');
-    document.getElementById('user-count').textContent = currentUsers.length;
+    currentUsers = Array.isArray(users) ? [...users] : [];
 
-    list.innerHTML = currentUsers.map(user => `
+    const list = document.getElementById('users-list');
+    const countBadge = document.getElementById('user-count');
+    if (countBadge) {
+        countBadge.textContent = currentUsers.length;
+    }
+
+    if (currentRoom) {
+        currentRoom.users = currentUsers;
+    }
+
+    if (list) {
+        list.innerHTML = currentUsers.map(user => `
         <div class="user-item">
             <div class="user-avatar" style="background: ${escapeAttr(user.avatarColor)}">
                 ${escapeHtml(user.username.charAt(0).toUpperCase())}
@@ -331,34 +345,57 @@ function updateUsersList(users) {
             ${user.host ? '<i class="fas fa-crown host-badge"></i>' : ''}
         </div>
     `).join('');
+    }
+
+    const modal = document.getElementById('listeners-modal');
+    if (modal && !modal.classList.contains('hidden')) {
+        renderListenersModal();
+    }
 }
 
-function openListenersModal() {
-    const modal = document.getElementById('listeners-modal');
+function getActiveListeners() {
+    if (currentRoom && Array.isArray(currentRoom.users) && currentRoom.users.length > 0) {
+        return currentRoom.users;
+    }
+    if (Array.isArray(currentUsers) && currentUsers.length > 0) {
+        return currentUsers;
+    }
+    return [];
+}
+
+function renderListenersModal() {
     const title = document.getElementById('listeners-modal-title');
     const list = document.getElementById('listeners-modal-list');
-    if (!modal || !title || !list) return;
+    if (!title || !list) return;
 
-    const count = currentUsers.length;
+    const listeners = getActiveListeners();
+    const count = listeners.length;
     title.textContent = count === 1 ? '1 person is listening now' : `${count} people are listening now`;
 
     if (count === 0) {
         list.innerHTML = '<div class="listeners-empty">No listeners are connected right now.</div>';
-    } else {
-        list.innerHTML = currentUsers.map(user => `
-            <div class="listener-row">
-                <div class="listener-avatar" style="background: ${escapeAttr(user.avatarColor || '#1DB954')}">
-                    ${escapeHtml((user.username || '?').charAt(0).toUpperCase())}
-                </div>
-                <div class="listener-meta">
-                    <div class="listener-name">${escapeHtml(user.username || 'Unknown User')}${user.username === currentUser ? ' (You)' : ''}</div>
-                    <div class="listener-role">${user.host ? 'Host' : 'Listener'}</div>
-                </div>
-                ${user.host ? '<span class="listener-tag host">Host</span>' : '<span class="listener-tag">Live</span>'}
-            </div>
-        `).join('');
+        return;
     }
 
+    list.innerHTML = listeners.map(user => `
+        <div class="listener-row">
+            <div class="listener-avatar" style="background: ${escapeAttr(user.avatarColor || '#1DB954')}">
+                ${escapeHtml((user.username || '?').charAt(0).toUpperCase())}
+            </div>
+            <div class="listener-meta">
+                <div class="listener-name">${escapeHtml(user.username || 'Unknown User')}${user.username === currentUser ? ' (You)' : ''}</div>
+                <div class="listener-role">${user.host ? 'Host' : 'Listener'}</div>
+            </div>
+            ${user.host ? '<span class="listener-tag host">Host</span>' : '<span class="listener-tag">Live</span>'}
+        </div>
+    `).join('');
+}
+
+function openListenersModal() {
+    const modal = document.getElementById('listeners-modal');
+    if (!modal) return;
+
+    renderListenersModal();
     modal.classList.remove('hidden');
 }
 
@@ -1079,9 +1116,12 @@ function leaveRoom() {
     audioPlayer.removeAttribute('data-song-id');
     currentRoom = null;
     currentUser = null;
+    currentUserId = null;
+    currentUsers = [];
     isHost = false;
     isPlaying = false;
     stopProgressTimer();
+    closeListenersModal();
 
     showScreen('home-screen');
     fetchStats();
