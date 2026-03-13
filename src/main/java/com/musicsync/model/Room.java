@@ -5,6 +5,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 public class Room {
 
+    public static final int MAX_MEMBERS = 6;
+
     private String roomCode;
     private String roomName;
     private String password;
@@ -46,6 +48,14 @@ public class Room {
     public void addUser(User user) {
         users.removeIf(u -> u.getId().equals(user.getId()));
         users.add(user);
+    }
+
+    public boolean hasUser(String userId) {
+        return users.stream().anyMatch(u -> u.getId().equals(userId));
+    }
+
+    public boolean isFull() {
+        return users.size() >= MAX_MEMBERS;
     }
 
     public void removeUser(String userId) {

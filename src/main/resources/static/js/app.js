@@ -27,6 +27,7 @@ let currentSongIndex = -1;
 let progressInterval = null;
 let currentTime = 0;
 let duration = 0;
+let currentUsers = [];
 let connectionRetries = 0;
 let maxRetries = 5;
 let isConnecting = false;
@@ -313,10 +314,11 @@ function updateRoomUI(state) {
 }
 
 function updateUsersList(users) {
+    currentUsers = Array.isArray(users) ? users : [];
     const list = document.getElementById('users-list');
-    document.getElementById('user-count').textContent = users.length;
+    document.getElementById('user-count').textContent = currentUsers.length;
 
-    list.innerHTML = users.map(user => `
+    list.innerHTML = currentUsers.map(user => `
         <div class="user-item">
             <div class="user-avatar" style="background: ${escapeAttr(user.avatarColor)}">
                 ${escapeHtml(user.username.charAt(0).toUpperCase())}
@@ -329,6 +331,48 @@ function updateUsersList(users) {
             ${user.host ? '<i class="fas fa-crown host-badge"></i>' : ''}
         </div>
     `).join('');
+}
+
+function openListenersModal() {
+    const modal = document.getElementById('listeners-modal');
+    const title = document.getElementById('listeners-modal-title');
+    const list = document.getElementById('listeners-modal-list');
+    if (!modal || !title || !list) return;
+
+    const count = currentUsers.length;
+    title.textContent = count === 1 ? '1 person is listening now' : `${count} people are listening now`;
+
+    if (count === 0) {
+        list.innerHTML = '<div class="listeners-empty">No listeners are connected right now.</div>';
+    } else {
+        list.innerHTML = currentUsers.map(user => `
+            <div class="listener-row">
+                <div class="listener-avatar" style="background: ${escapeAttr(user.avatarColor || '#1DB954')}">
+                    ${escapeHtml((user.username || '?').charAt(0).toUpperCase())}
+                </div>
+                <div class="listener-meta">
+                    <div class="listener-name">${escapeHtml(user.username || 'Unknown User')}${user.username === currentUser ? ' (You)' : ''}</div>
+                    <div class="listener-role">${user.host ? 'Host' : 'Listener'}</div>
+                </div>
+                ${user.host ? '<span class="listener-tag host">Host</span>' : '<span class="listener-tag">Live</span>'}
+            </div>
+        `).join('');
+    }
+
+    modal.classList.remove('hidden');
+}
+
+function closeListenersModal() {
+    const modal = document.getElementById('listeners-modal');
+    if (modal) {
+        modal.classList.add('hidden');
+    }
+}
+
+function handleListenersModalBackdrop(event) {
+    if (event.target && event.target.id === 'listeners-modal') {
+        closeListenersModal();
+    }
 }
 
 function updateNowPlaying(song, playbackState) {
@@ -1102,6 +1146,9 @@ window.onQueueDragOver = onQueueDragOver;
 window.onQueueDrop = onQueueDrop;
 window.onQueueDragEnd = onQueueDragEnd;
 window.copyRoomCode = copyRoomCode;
+window.openListenersModal = openListenersModal;
+window.closeListenersModal = closeListenersModal;
+window.handleListenersModalBackdrop = handleListenersModalBackdrop;
 console.log('All functions exposed to window object');
 
 // Enter key handlers for forms
@@ -1115,4 +1162,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (createRoomName) createRoomName.addEventListener('keypress', e => { if (e.key === 'Enter') createRoom(); });
     if (joinUsername) joinUsername.addEventListener('keypress', e => { if (e.key === 'Enter') document.getElementById('join-room-code').focus(); });
     if (joinRoomCode) joinRoomCode.addEventListener('keypress', e => { if (e.key === 'Enter') joinRoom(); });
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+            closeListenersModal();
+        }
+    });
 });

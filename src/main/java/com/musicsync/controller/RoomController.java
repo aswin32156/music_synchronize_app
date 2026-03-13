@@ -65,7 +65,14 @@ public class RoomController {
             RoomState state = roomService.getRoomState(room.getRoomCode());
             return ResponseEntity.ok(state);
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(401).body(Map.of("error", e.getMessage()));
+            String message = e.getMessage() != null ? e.getMessage() : "Failed to join room";
+            if ("Incorrect password".equals(message)) {
+                return ResponseEntity.status(401).body(Map.of("error", message));
+            }
+            if (message.startsWith("Room is full")) {
+                return ResponseEntity.status(409).body(Map.of("error", message));
+            }
+            return ResponseEntity.badRequest().body(Map.of("error", message));
         }
     }
 

@@ -61,6 +61,11 @@ public class RoomService {
         
         // Get or create persistent user
         PersistentUser persistentUser = userService.getOrCreateUser(username);
+
+        // Allow reconnect for existing members, but block new joins when room is full
+        if (room.isFull() && !room.hasUser(persistentUser.getId())) {
+            throw new IllegalArgumentException("Room is full. Maximum 6 members allowed.");
+        }
         
         User user = new User(persistentUser.getId(), username, persistentUser.getAvatarColor(), false, null);
         room.addUser(user);
