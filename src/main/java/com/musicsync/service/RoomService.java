@@ -8,6 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Service;
 
 import com.musicsync.dto.RoomState;
+import com.musicsync.model.PlaybackState;
 import com.musicsync.model.PersistentUser;
 import com.musicsync.model.Room;
 import com.musicsync.model.User;
