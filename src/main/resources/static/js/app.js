@@ -76,6 +76,16 @@ let isConnecting = false;
 let pendingActions = [];
 let roomStateRefreshTimeout = null;
 let roomStatePollInterval = null;
+let friendsRefreshInterval = null;
+
+function refreshFriendsDataSafely() {
+    if (typeof loadFriends === 'function') {
+        loadFriends();
+    }
+    if (typeof loadFriendRequests === 'function') {
+        loadFriendRequests();
+    }
+}
 
 function executePendingActions() {
     while (pendingActions.length > 0) {
@@ -149,22 +159,60 @@ const audioPlayer = new Audio();
 audioPlayer.volume = 1.0;
 audioPlayer.crossOrigin = "anonymous"; // Enable CORS for external audio sources
 let audioUnlocked = false;
+let awaitingAudioResume = false;
+const AUDIO_UNLOCK_SRC = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=';
+const audioUnlockProbe = new Audio(AUDIO_UNLOCK_SRC);
+audioUnlockProbe.preload = 'auto';
 
 // Unlock audio playback on user gesture (needed for browsers' autoplay policy)
 function unlockAudio() {
-    if (audioUnlocked) return;
-    audioPlayer.muted = true;
-    audioPlayer.play().then(() => {
-        audioPlayer.pause();
-        audioPlayer.muted = false;
-        audioPlayer.currentTime = 0;
+    if (audioUnlocked) return Promise.resolve();
+
+    audioUnlockProbe.muted = true;
+    const unlockPromise = audioUnlockProbe.play();
+    if (!unlockPromise || typeof unlockPromise.then !== 'function') {
+        audioUnlocked = true;
+        return Promise.resolve();
+    }
+
+    return unlockPromise.then(() => {
+        audioUnlockProbe.pause();
+        audioUnlockProbe.currentTime = 0;
         audioUnlocked = true;
         console.log('[Audio] Audio unlocked for autoplay');
-    }).catch(() => {
-        audioPlayer.muted = false;
-        console.warn('[Audio] Could not unlock audio');
+    }).catch((err) => {
+        console.warn('[Audio] Could not unlock audio', err);
+        throw err;
     });
 }
+
+function requestUserAudioResume() {
+    if (awaitingAudioResume) return;
+    awaitingAudioResume = true;
+    showToast('Tap anywhere once to enable room audio.', 'info');
+
+    const resumeAudio = () => {
+        awaitingAudioResume = false;
+        document.removeEventListener('pointerdown', resumeAudio);
+        document.removeEventListener('keydown', resumeAudio);
+
+        unlockAudio()
+            .catch(() => {})
+            .finally(() => {
+                if (isPlaying) {
+                    audioPlayer.play().catch(() => {});
+                }
+            });
+    };
+
+    document.addEventListener('pointerdown', resumeAudio);
+    document.addEventListener('keydown', resumeAudio);
+}
+
+// A first interaction anywhere on the page usually satisfies autoplay policies.
+document.addEventListener('pointerdown', () => {
+    unlockAudio().catch(() => {});
+}, { once: true });
 
 audioPlayer.addEventListener('ended', () => {
     if (isHost) {
@@ -384,12 +432,15 @@ function updateRoomUI(state) {
         const user = roomUsers.find(u => u.username === currentUser);
         if (user) {
             currentUserId = user.id;
-            loadFriends();
-            loadFriendRequests();
-            // Auto-refresh friends every 10 seconds
-            setInterval(() => {
-                loadFriends();
-                loadFriendRequests();
+
+            // Friends panel is optional; avoid crashing room init if those handlers are absent.
+            refreshFriendsDataSafely();
+
+            if (friendsRefreshInterval) {
+                clearInterval(friendsRefreshInterval);
+            }
+            friendsRefreshInterval = setInterval(() => {
+                refreshFriendsDataSafely();
             }, 10000);
         }
     }
@@ -401,8 +452,20 @@ function updateRoomUI(state) {
     updateQueue(roomQueue, state.playbackState);
 
     // Playback
-    if (state.currentSong) {
-        updateNowPlaying(state.currentSong, state.playbackState);
+    const playbackIndex = Number(state?.playbackState?.currentSongIndex);
+    const fallbackSong = Number.isInteger(playbackIndex)
+        && playbackIndex >= 0
+        && playbackIndex < roomQueue.length
+        ? roomQueue[playbackIndex]
+        : null;
+    const stateSong = (state.currentSong && state.currentSong.title)
+        ? state.currentSong
+        : fallbackSong;
+
+    if (stateSong) {
+        updateNowPlaying(stateSong, state.playbackState);
+    } else if (roomQueue.length === 0) {
+        updateNowPlaying(null, state.playbackState);
     }
 
     // Check host status
@@ -556,11 +619,7 @@ function updateNowPlaying(song, playbackState) {
                         console.error('Failed to play audio:', err);
                         setTimeout(() => {
                             audioPlayer.play().catch(() => {
-                                showToast('Click anywhere to enable audio playback.', 'info');
-                                document.addEventListener('click', function resumeAudio() {
-                                    audioPlayer.play().catch(() => {});
-                                    document.removeEventListener('click', resumeAudio);
-                                }, { once: true });
+                                requestUserAudioResume();
                             });
                         }, 300);
                     });
@@ -1112,10 +1171,6 @@ function addToQueue(songId) {
 
 // ===== Playback Controls =====
 function togglePlayPause() {
-    if (!isHost) {
-        showToast('Only the host can control playback', 'info');
-        return;
-    }
     if (!currentRoom || !currentRoom.queue || currentRoom.queue.length === 0) {
         showToast('Add songs to the queue first', 'info');
         return;
@@ -1127,7 +1182,7 @@ function togglePlayPause() {
 
 function nextSong() {
     if (!isHost) {
-        showToast('Only the host can control playback', 'info');
+        showToast('Only the host can switch songs', 'info');
         return;
     }
     sendPlaybackCommand('next', 0);
@@ -1135,7 +1190,7 @@ function nextSong() {
 
 function previousSong() {
     if (!isHost) {
-        showToast('Only the host can control playback', 'info');
+        showToast('Only the host can switch songs', 'info');
         return;
     }
     if (audioPlayer.currentTime > 3) {
@@ -1147,7 +1202,7 @@ function previousSong() {
 
 function playSongAtIndex(index) {
     if (!isHost) {
-        showToast('Only the host can control playback', 'info');
+        showToast('Only the host can choose the next song', 'info');
         return;
     }
     // If a song is currently playing, don't interrupt it
@@ -1159,7 +1214,10 @@ function playSongAtIndex(index) {
 }
 
 function seekTo(event) {
-    if (!isHost) return;
+    if (!isHost) {
+        showToast('Only the host can seek in the song', 'info');
+        return;
+    }
     const bar = document.getElementById('progress-bar');
     const rect = bar.getBoundingClientRect();
     const pointerX = typeof event.clientX === 'number'
@@ -1301,9 +1359,6 @@ function connectWebSocket(roomCode) {
             statusEl.innerHTML = '<i class="fas fa-wifi"></i><span>Connected</span>';
             setTimeout(() => statusEl.classList.remove('show'), 2000);
 
-        // Execute any pending actions
-        executePendingActions();
-
         // Subscribe to room state updates
         stompClient.subscribe('/topic/room/' + roomCode + '/state', function(msg) {
             const state = JSON.parse(msg.body);
@@ -1338,6 +1393,9 @@ function connectWebSocket(roomCode) {
         stompClient.send('/app/room.sync', {}, JSON.stringify({
             roomCode: roomCode
         }));
+
+        // Execute queued actions only after subscriptions are ready.
+        executePendingActions();
 
     }, function(error) {
         console.error('[WebSocket] Connection failed:', error);
@@ -1374,7 +1432,12 @@ function connectWebSocket(roomCode) {
 
 function handlePlaybackUpdate(data) {
     const ps = data.playbackState;
-    const song = data.currentSong;
+    const incomingSong = data.currentSong && data.currentSong.title ? data.currentSong : null;
+    const fallbackSong = (!incomingSong && ps && currentRoom && Array.isArray(currentRoom.queue)
+        && ps.currentSongIndex >= 0 && ps.currentSongIndex < currentRoom.queue.length)
+        ? currentRoom.queue[ps.currentSongIndex]
+        : null;
+    const song = incomingSong || fallbackSong;
 
     if (song && song.title) {
         document.getElementById('no-song-placeholder').classList.add('hidden');
@@ -1415,7 +1478,11 @@ function handlePlaybackUpdate(data) {
                 if (playPromise !== undefined) {
                     playPromise.catch((err) => {
                         console.error('Failed to sync audio playback:', err);
-                        setTimeout(() => audioPlayer.play().catch(() => {}), 300);
+                        setTimeout(() => {
+                            audioPlayer.play().catch(() => {
+                                requestUserAudioResume();
+                            });
+                        }, 300);
                     });
                 }
                 startProgressTimer();
@@ -1445,7 +1512,9 @@ function handlePlaybackUpdate(data) {
             }
 
             if (isPlaying && audioPlayer.paused) {
-                audioPlayer.play().catch(() => {});
+                audioPlayer.play().catch(() => {
+                    requestUserAudioResume();
+                });
                 startProgressTimer();
                 document.getElementById('sound-waves').classList.add('active');
             } else if (!isPlaying && !audioPlayer.paused) {
@@ -1605,6 +1674,10 @@ function leaveRoom() {
     currentUser = null;
     currentUserId = null;
     currentUsers = [];
+    if (friendsRefreshInterval) {
+        clearInterval(friendsRefreshInterval);
+        friendsRefreshInterval = null;
+    }
     isHost = false;
     isPlaying = false;
     stopProgressTimer();

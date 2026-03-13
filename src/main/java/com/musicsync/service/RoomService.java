@@ -115,6 +115,18 @@ public class RoomService {
                 .orElse(null);
     }
 
+    public User findUserBySession(String roomCode, String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return null;
+
+        Room room = rooms.get(roomCode.toUpperCase());
+        if (room == null) return null;
+
+        return room.getUsers().stream()
+                .filter(u -> sessionId.equals(u.getSessionId()))
+                .findFirst()
+                .orElse(null);
+    }
+
     public void updateUserSession(String roomCode, String username, String sessionId) {
         User user = findUserInRoom(roomCode, username);
         if (user != null) {

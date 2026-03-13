@@ -61,14 +61,30 @@ public class WebSocketController {
     }
 
     @MessageMapping("/room.playback")
-    public void handlePlayback(@Payload PlaybackCommand command) {
+    public void handlePlayback(@Payload PlaybackCommand command,
+                               SimpMessageHeaderAccessor headerAccessor) {
         String roomCode = command.getRoomCode();
         Room room = roomService.getRoom(roomCode);
         if (room == null) return;
 
+        String action = command.getAction();
+        if (action == null || action.isBlank()) return;
+
+        String sessionId = headerAccessor.getSessionId();
+        User sender = roomService.findUserBySession(roomCode, sessionId);
+        if (sender == null) return;
+
+        boolean hostOnlyAction = "next".equals(action)
+                || "previous".equals(action)
+                || "seek".equals(action)
+                || "select".equals(action);
+        if (hostOnlyAction && !sender.isHost()) {
+            return;
+        }
+
         PlaybackState state = room.getPlaybackState();
 
-        switch (command.getAction()) {
+        switch (action) {
             case "play":
                 state.setPlaying(true);
                 state.setCurrentTime(command.getCurrentTime());
