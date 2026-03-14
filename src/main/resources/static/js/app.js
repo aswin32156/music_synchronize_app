@@ -138,6 +138,19 @@ function startRoomStatePolling(roomCode) {
     if (!roomCode) return;
     stopRoomStatePolling();
     roomStatePollInterval = setInterval(() => {
+        const activeSong = currentRoom && Array.isArray(currentRoom.queue)
+            ? currentRoom.queue[currentSongIndex]
+            : null;
+        const isActiveVideoPlayback = !!(
+            activeSong && activeSong.id && activeSong.id.startsWith('ytv_') && isPlaying
+        );
+
+        // Video playback is sensitive to forced periodic state resync.
+        // Keep realtime websocket updates, but skip fallback polling while actively playing video.
+        if (isActiveVideoPlayback) {
+            return;
+        }
+
         refreshRoomStateOnce(roomCode);
     }, 4000);
 }
@@ -671,9 +684,16 @@ function updateNowPlaying(song, playbackState) {
             // YouTube video playback via IFrame API
             isPlaying = playbackState.playing;
             currentTime = playbackState.currentTime || 0;
-            stopAudioPlayback(true);
+            stopAudioPlayback(false);
             const videoId = song.id.substring(4);
-            loadYtVideo(videoId, currentTime, isPlaying);
+
+            // Avoid re-driving the same iframe instance on every state/render update.
+            // Recreate/reload only when the selected video changes or player is missing.
+            const shouldLoadVideo = !ytPlayer || ytPlayerVideoId !== videoId;
+            if (shouldLoadVideo) {
+                loadYtVideo(videoId, currentTime, isPlaying);
+            }
+
             if (isPlaying) {
                 startProgressTimer();
                 document.getElementById('sound-waves').classList.add('active');
@@ -874,6 +894,79 @@ let ytPlayer = null;
 let ytPlayerVideoId = null;
 let ytPlayerReady = false;
 let ytPendingLoad = null;
+let ytStateSyncSuppressUntil = 0;
+const YT_STATE_SYNC_SUPPRESS_MS = 900;
+const YT_SEEK_SYNC_FORWARD_THRESHOLD_SEC = 10;
+const YT_SEEK_SYNC_BACKWARD_THRESHOLD_SEC = 3;
+const YT_QUALITY_STEPS = ['large', 'medium', 'small'];
+let ytQualityStepIndex = 1; // default to medium for smoother playback
+let ytRecentBufferEvents = [];
+let ytLastQualityChangeAt = 0;
+
+function applyYtPreferredQuality(player) {
+    if (!player) return;
+    const quality = YT_QUALITY_STEPS[Math.max(0, Math.min(ytQualityStepIndex, YT_QUALITY_STEPS.length - 1))];
+
+    try {
+        if (typeof player.setPlaybackQualityRange === 'function') {
+            player.setPlaybackQualityRange(quality);
+        }
+    } catch (err) {}
+
+    try {
+        if (typeof player.setPlaybackQuality === 'function') {
+            player.setPlaybackQuality(quality);
+        }
+    } catch (err) {}
+}
+
+function trackYtBufferingAndAdapt(player) {
+    const now = Date.now();
+    ytRecentBufferEvents.push(now);
+    ytRecentBufferEvents = ytRecentBufferEvents.filter(t => (now - t) <= 15000);
+
+    // If buffering repeats often, lower quality one step to stabilize playback.
+    if (
+        ytRecentBufferEvents.length >= 3
+        && ytQualityStepIndex < YT_QUALITY_STEPS.length - 1
+        && (now - ytLastQualityChangeAt) > 6000
+    ) {
+        ytQualityStepIndex += 1;
+        ytLastQualityChangeAt = now;
+        ytRecentBufferEvents = [];
+        applyYtPreferredQuality(player);
+        showToast('Network is unstable. Lowered video quality for smoother playback.', 'info');
+    }
+}
+
+function suppressYtStateSync(durationMs = YT_STATE_SYNC_SUPPRESS_MS) {
+    const until = Date.now() + Math.max(0, durationMs || 0);
+    if (until > ytStateSyncSuppressUntil) {
+        ytStateSyncSuppressUntil = until;
+    }
+}
+
+function isYtStateSyncSuppressed() {
+    return Date.now() < ytStateSyncSuppressUntil;
+}
+
+function shouldResyncYtTime(localTime, targetTime) {
+    const local = Number(localTime) || 0;
+    const target = Number(targetTime) || 0;
+    const delta = target - local;
+
+    // Only jump forward for very large drifts (likely explicit seek/select events).
+    if (delta > YT_SEEK_SYNC_FORWARD_THRESHOLD_SEC) {
+        return true;
+    }
+
+    // Rewind sooner when local player runs ahead of authoritative room time.
+    if (delta < -YT_SEEK_SYNC_BACKWARD_THRESHOLD_SEC) {
+        return true;
+    }
+
+    return false;
+}
 
 window.onYouTubeIframeAPIReady = function() {
     ytPlayerReady = true;
@@ -913,27 +1006,41 @@ function _createYtPlayer(videoId, startTime, autoplay) {
             start: Math.floor(startTime || 0),
             rel: 0,
             modestbranding: 1,
+            playsinline: 1,
             fs: 1,
             origin: window.location.origin
         },
         events: {
             onReady: (e) => {
-                if (startTime > 0) e.target.seekTo(startTime, true);
+                applyYtPreferredQuality(e.target);
+                if (startTime > 0) {
+                    suppressYtStateSync(1200);
+                    e.target.seekTo(startTime, true);
+                }
                 if (autoplay) {
                     stopAudioPlayback(true);
+                    suppressYtStateSync(1200);
                     e.target.playVideo();
                 }
-                else e.target.pauseVideo();
+                else {
+                    suppressYtStateSync(900);
+                    e.target.pauseVideo();
+                }
             },
             onStateChange: (e) => {
                 if (e.data === YT.PlayerState.BUFFERING || e.data === YT.PlayerState.PLAYING) {
-                    stopAudioPlayback(true);
+                    stopAudioPlayback(false);
+                }
+
+                if (e.data === YT.PlayerState.BUFFERING) {
+                    trackYtBufferingAndAdapt(e.target);
                 }
 
                 const activeSong = currentRoom && Array.isArray(currentRoom.queue)
                     ? currentRoom.queue[currentSongIndex]
                     : null;
                 const shouldSyncVideoState = !!(activeSong && activeSong.id && activeSong.id.startsWith('ytv_'));
+                const stateSyncSuppressed = isYtStateSyncSuppressed();
 
                 if (e.data === YT.PlayerState.ENDED) {
                     waitForConnection(() => {
@@ -954,7 +1061,7 @@ function _createYtPlayer(videoId, startTime, autoplay) {
 
                     // If playback changed from a direct click inside the iframe,
                     // sync that state to the room so it doesn't auto-resume unexpectedly.
-                    if (shouldSyncVideoState && !wasPlaying) {
+                    if (shouldSyncVideoState && !stateSyncSuppressed && !wasPlaying) {
                         let videoTime = 0;
                         try { videoTime = e.target.getCurrentTime() || 0; } catch (err) {}
                         sendPlaybackCommand('play', videoTime);
@@ -966,7 +1073,7 @@ function _createYtPlayer(videoId, startTime, autoplay) {
                     stopProgressTimer();
                     document.getElementById('sound-waves').classList.remove('active');
 
-                    if (shouldSyncVideoState && wasPlaying) {
+                    if (shouldSyncVideoState && !stateSyncSuppressed && wasPlaying) {
                         let videoTime = 0;
                         try { videoTime = e.target.getCurrentTime() || 0; } catch (err) {}
                         sendPlaybackCommand('pause', videoTime);
@@ -995,10 +1102,26 @@ function loadYtVideo(videoId, startTime, autoplay) {
     }
     if (ytPlayer && ytPlayerVideoId === videoId) {
         try {
-            if (Math.abs(ytPlayer.getCurrentTime() - (startTime || 0)) > 2) {
-                ytPlayer.seekTo(startTime || 0, true);
+            const desiredTime = Number.isFinite(Number(startTime)) ? Number(startTime) : 0;
+            const localTime = ytPlayer.getCurrentTime() || 0;
+            if (shouldResyncYtTime(localTime, desiredTime)) {
+                suppressYtStateSync(1100);
+                ytPlayer.seekTo(desiredTime, true);
             }
-            if (autoplay) ytPlayer.playVideo(); else ytPlayer.pauseVideo();
+
+            const playerState = typeof ytPlayer.getPlayerState === 'function'
+                ? ytPlayer.getPlayerState()
+                : null;
+
+            if (autoplay) {
+                if (playerState !== YT.PlayerState.PLAYING && playerState !== YT.PlayerState.BUFFERING) {
+                    suppressYtStateSync(900);
+                    ytPlayer.playVideo();
+                }
+            } else if (playerState === YT.PlayerState.PLAYING || playerState === YT.PlayerState.BUFFERING) {
+                suppressYtStateSync(900);
+                ytPlayer.pauseVideo();
+            }
         } catch(e) {}
         return;
     }
@@ -1481,6 +1604,7 @@ function togglePlayPause() {
             loadYtVideo(videoId, ct, true);
             try {
                 if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+                    suppressYtStateSync(1000);
                     ytPlayer.playVideo();
                 }
             } catch (err) {
@@ -1489,6 +1613,7 @@ function togglePlayPause() {
         } else {
             try {
                 if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+                    suppressYtStateSync(1000);
                     ytPlayer.pauseVideo();
                 }
             } catch (err) {
@@ -1496,7 +1621,8 @@ function togglePlayPause() {
             }
         }
 
-        // The iframe state-change handler sends the matching play/pause command.
+        // Sync room state directly for control-button actions.
+        sendPlaybackCommand(action, ct);
         return;
     }
 
@@ -1583,7 +1709,10 @@ function seekTo(event) {
     // Apply immediately for host responsiveness; room sync keeps everyone aligned.
     currentTime = seekTime;
     if (isVideoSong && ytPlayer) {
-        try { ytPlayer.seekTo(seekTime, true); } catch(e) {}
+        try {
+            suppressYtStateSync(900);
+            ytPlayer.seekTo(seekTime, true);
+        } catch(e) {}
     } else {
         try {
             audioPlayer.currentTime = seekTime;
@@ -1824,14 +1953,15 @@ function handlePlaybackUpdate(data) {
         updatePlayPauseIcon();
 
         if (isVideoSong) {
-            stopAudioPlayback(true);
+            stopAudioPlayback(false);
             const serverTime = Number(ps.currentTime);
             if (Number.isFinite(serverTime) && serverTime >= 0) {
                 currentTime = serverTime;
                 try {
                     if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
                         const localVideoTime = ytPlayer.getCurrentTime() || 0;
-                        if (Math.abs(localVideoTime - serverTime) > 1.2) {
+                        if (shouldResyncYtTime(localVideoTime, serverTime)) {
+                            suppressYtStateSync(1100);
                             ytPlayer.seekTo(serverTime, true);
                         }
                     }
@@ -1842,7 +1972,16 @@ function handlePlaybackUpdate(data) {
 
             if (isPlaying) {
                 try {
-                    if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+                    const playerState = (ytPlayer && typeof ytPlayer.getPlayerState === 'function')
+                        ? ytPlayer.getPlayerState()
+                        : null;
+                    if (
+                        ytPlayer
+                        && typeof ytPlayer.playVideo === 'function'
+                        && playerState !== YT.PlayerState.PLAYING
+                        && playerState !== YT.PlayerState.BUFFERING
+                    ) {
+                        suppressYtStateSync(900);
                         ytPlayer.playVideo();
                     }
                 } catch (err) {
@@ -1852,7 +1991,15 @@ function handlePlaybackUpdate(data) {
                 document.getElementById('sound-waves').classList.add('active');
             } else {
                 try {
-                    if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+                    const playerState = (ytPlayer && typeof ytPlayer.getPlayerState === 'function')
+                        ? ytPlayer.getPlayerState()
+                        : null;
+                    if (
+                        ytPlayer
+                        && typeof ytPlayer.pauseVideo === 'function'
+                        && (playerState === YT.PlayerState.PLAYING || playerState === YT.PlayerState.BUFFERING)
+                    ) {
+                        suppressYtStateSync(900);
                         ytPlayer.pauseVideo();
                     }
                 } catch (err) {
