@@ -160,6 +160,7 @@ audioPlayer.volume = 1.0;
 audioPlayer.crossOrigin = "anonymous"; // Enable CORS for external audio sources
 let audioUnlocked = false;
 let awaitingAudioResume = false;
+let pendingAudioResumeHandler = null;
 const AUDIO_UNLOCK_SRC = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=';
 const audioUnlockProbe = new Audio(AUDIO_UNLOCK_SRC);
 audioUnlockProbe.preload = 'auto';
@@ -193,26 +194,69 @@ function requestUserAudioResume() {
 
     const resumeAudio = () => {
         awaitingAudioResume = false;
+        pendingAudioResumeHandler = null;
         document.removeEventListener('pointerdown', resumeAudio);
         document.removeEventListener('keydown', resumeAudio);
 
         unlockAudio()
             .catch(() => {})
             .finally(() => {
-                if (isPlaying) {
+                const activeSong = currentRoom && Array.isArray(currentRoom.queue)
+                    ? currentRoom.queue[currentSongIndex]
+                    : null;
+                const hasAudioSource = !!(audioPlayer.getAttribute('data-song-id') || audioPlayer.getAttribute('src') || audioPlayer.currentSrc);
+
+                if (isPlaying && hasAudioSource && !(activeSong && activeSong.id && activeSong.id.startsWith('ytv_'))) {
                     audioPlayer.play().catch(() => {});
                 }
             });
     };
 
+    pendingAudioResumeHandler = resumeAudio;
     document.addEventListener('pointerdown', resumeAudio);
     document.addEventListener('keydown', resumeAudio);
+}
+
+function cancelPendingAudioResume() {
+    if (!pendingAudioResumeHandler) {
+        awaitingAudioResume = false;
+        return;
+    }
+
+    document.removeEventListener('pointerdown', pendingAudioResumeHandler);
+    document.removeEventListener('keydown', pendingAudioResumeHandler);
+    pendingAudioResumeHandler = null;
+    awaitingAudioResume = false;
 }
 
 // A first interaction anywhere on the page usually satisfies autoplay policies.
 document.addEventListener('pointerdown', () => {
     unlockAudio().catch(() => {});
 }, { once: true });
+
+function stopAudioPlayback(clearSource = false) {
+    cancelPendingAudioResume();
+    audioPlayer.pause();
+
+    if (!clearSource) {
+        return;
+    }
+
+    const hasSource = !!(audioPlayer.getAttribute('data-song-id') || audioPlayer.getAttribute('src') || audioPlayer.currentSrc);
+
+    try {
+        audioPlayer.currentTime = 0;
+    } catch (err) {}
+
+    audioPlayer.removeAttribute('data-song-id');
+    audioPlayer.srcObject = null;
+    audioPlayer.src = '';
+    audioPlayer.removeAttribute('src');
+
+    if (hasSource) {
+        audioPlayer.load();
+    }
+}
 
 audioPlayer.addEventListener('ended', () => {
     if (isHost) {
@@ -468,10 +512,21 @@ function updateRoomUI(state) {
         updateNowPlaying(null, state.playbackState);
     }
 
-    // Check host status
-    if (state.host && state.host.username === currentUser) {
-        isHost = true;
-        document.getElementById('host-indicator').classList.add('hidden');
+    // Check host status using the current user record in this room state.
+    const me = roomUsers.find(user =>
+        (currentUserId && user.id === currentUserId)
+        || (!currentUserId && user.username === currentUser)
+    );
+    if (me) {
+        currentUserId = me.id;
+        isHost = !!me.host;
+    } else {
+        isHost = !!(state.host && state.host.username === currentUser);
+    }
+
+    const hostIndicator = document.getElementById('host-indicator');
+    if (hostIndicator) {
+        hostIndicator.classList.toggle('hidden', isHost);
     }
 }
 
@@ -581,15 +636,29 @@ function updateNowPlaying(song, playbackState) {
         document.getElementById('now-playing-bg').style.backgroundImage = '';
         document.getElementById('sound-waves').classList.remove('active');
         stopProgressTimer();
+        hideYtVideoPlayer();
+        destroyYtPlayer();
         return;
+    }
+
+    const isVideoSong = !!(song.id && song.id.startsWith('ytv_'));
+
+    // Toggle player visibility
+    if (isVideoSong) {
+        showYtVideoPlayer();
+    } else {
+        hideYtVideoPlayer();
+        destroyYtPlayer();
     }
 
     document.getElementById('no-song-placeholder').classList.add('hidden');
     document.getElementById('song-title').textContent = song.title;
     document.getElementById('song-artist').textContent = song.artist;
     document.getElementById('song-album').textContent = song.album || '';
-    document.getElementById('album-cover-img').src = song.coverUrl || '';
     document.getElementById('now-playing-bg').style.backgroundImage = `url(${song.coverUrl})`;
+    if (!isVideoSong) {
+        document.getElementById('album-cover-img').src = song.coverUrl || '';
+    }
 
     duration = song.durationSeconds || 0;
     document.getElementById('time-total').textContent = formatTime(duration);
@@ -598,38 +667,54 @@ function updateNowPlaying(song, playbackState) {
         currentSongIndex = playbackState.currentSongIndex;
         updatePlayPauseIcon();
 
-        // Load audio for the current song — only if song changed
-        if (song && song.audioUrl && audioPlayer.getAttribute('data-song-id') !== song.id) {
-            audioPlayer.setAttribute('data-song-id', song.id);
-            audioPlayer.src = song.audioUrl;
-            audioPlayer.load();
-
+        if (isVideoSong) {
+            // YouTube video playback via IFrame API
             isPlaying = playbackState.playing;
             currentTime = playbackState.currentTime || 0;
-
-            // Sync seek position for new song
-            if (currentTime > 0) {
-                audioPlayer.currentTime = currentTime;
-            }
-
+            stopAudioPlayback(true);
+            const videoId = song.id.substring(4);
+            loadYtVideo(videoId, currentTime, isPlaying);
             if (isPlaying) {
-                const playPromise = audioPlayer.play();
-                if (playPromise !== undefined) {
-                    playPromise.catch((err) => {
-                        console.error('Failed to play audio:', err);
-                        setTimeout(() => {
-                            audioPlayer.play().catch(() => {
-                                requestUserAudioResume();
-                            });
-                        }, 300);
-                    });
-                }
                 startProgressTimer();
                 document.getElementById('sound-waves').classList.add('active');
             } else {
-                audioPlayer.pause();
                 stopProgressTimer();
                 document.getElementById('sound-waves').classList.remove('active');
+            }
+        } else {
+            // Load audio for the current song — only if song changed
+            if (song && song.audioUrl && audioPlayer.getAttribute('data-song-id') !== song.id) {
+                audioPlayer.setAttribute('data-song-id', song.id);
+                audioPlayer.src = song.audioUrl;
+                audioPlayer.load();
+
+                isPlaying = playbackState.playing;
+                currentTime = playbackState.currentTime || 0;
+
+                // Sync seek position for new song
+                if (currentTime > 0) {
+                    audioPlayer.currentTime = currentTime;
+                }
+
+                if (isPlaying) {
+                    const playPromise = audioPlayer.play();
+                    if (playPromise !== undefined) {
+                        playPromise.catch((err) => {
+                            console.error('Failed to play audio:', err);
+                            setTimeout(() => {
+                                audioPlayer.play().catch(() => {
+                                    requestUserAudioResume();
+                                });
+                            }, 300);
+                        });
+                    }
+                    startProgressTimer();
+                    document.getElementById('sound-waves').classList.add('active');
+                } else {
+                    audioPlayer.pause();
+                    stopProgressTimer();
+                    document.getElementById('sound-waves').classList.remove('active');
+                }
             }
         }
         // Same song still playing — don't touch audio, just update UI state
@@ -671,9 +756,11 @@ function updateQueue(queue, playbackState) {
             </div>
             ${song.addedBy ? `<span class="song-item-added">Added by ${escapeHtml(song.addedBy)}</span>` : ''}
             <span class="song-item-duration">${formatTime(song.durationSeconds)}</span>
-            <button class="song-item-action remove" title="Remove from queue">
+            ${isHost ? `
+            <button class="song-item-action remove" type="button" draggable="false" aria-label="Remove ${escapeAttr(song.title)} from queue" title="Remove from queue">
                 <i class="fas fa-times"></i>
             </button>
+            ` : ''}
         </div>
     `).join('');
 
@@ -686,10 +773,22 @@ function updateQueue(queue, playbackState) {
         item.addEventListener('click', () => playSongAtIndex(idx));
 
         // Remove button
-        item.querySelector('.song-item-action.remove').addEventListener('click', e => {
-            e.stopPropagation();
-            removeFromQueue(songId);
-        });
+        const removeBtn = item.querySelector('.song-item-action.remove');
+        if (removeBtn) {
+            removeBtn.addEventListener('pointerdown', e => {
+                // Prevent drag start from the parent draggable row.
+                e.stopPropagation();
+            });
+            removeBtn.addEventListener('dragstart', e => {
+                e.preventDefault();
+                e.stopPropagation();
+            });
+            removeBtn.addEventListener('click', e => {
+                e.preventDefault();
+                e.stopPropagation();
+                removeFromQueue(songId);
+            });
+        }
 
         // Drag handle — prevent click from bubbling to play
         item.querySelector('.song-item-drag').addEventListener('click', e => e.stopPropagation());
@@ -750,22 +849,211 @@ function reorderQueue(fromIndex, toIndex) {
 }
 
 function removeFromQueue(songId) {
+    if (!isHost) {
+        showToast('Only the host can remove songs from queue', 'info');
+        return;
+    }
+
+    if (!songId) {
+        showToast('Unable to remove this song right now. Try refreshing room state.', 'error');
+        return;
+    }
+
     waitForConnection(() => {
         stompClient.send('/app/room.queue.remove', {}, JSON.stringify({
             roomCode: currentRoom.roomCode,
-            songId: songId
+            songId: songId,
+            username: currentUser
         }));
     });
     showToast('Song removed from queue', 'success');
 }
 
-// ===== External Search (JioSaavn + YouTube Music) =====
+// ===== YouTube IFrame Video Player =====
+let ytPlayer = null;
+let ytPlayerVideoId = null;
+let ytPlayerReady = false;
+let ytPendingLoad = null;
+
+window.onYouTubeIframeAPIReady = function() {
+    ytPlayerReady = true;
+    if (ytPendingLoad) {
+        const { videoId, startTime, autoplay } = ytPendingLoad;
+        ytPendingLoad = null;
+        _createYtPlayer(videoId, startTime, autoplay);
+    }
+};
+
+function ensureYtApiLoaded() {
+    if (window.YT && window.YT.Player) { ytPlayerReady = true; return; }
+    if (document.getElementById('yt-iframe-api')) return;
+    const tag = document.createElement('script');
+    tag.id = 'yt-iframe-api';
+    tag.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+}
+
+function _createYtPlayer(videoId, startTime, autoplay) {
+    const wrapper = document.getElementById('yt-video-wrapper');
+    if (!wrapper) return;
+    const existing = document.getElementById('yt-player');
+    if (existing) existing.remove();
+    const div = document.createElement('div');
+    div.id = 'yt-player';
+    wrapper.appendChild(div);
+
+    ytPlayerVideoId = videoId;
+    ytPlayer = new YT.Player('yt-player', {
+        videoId: videoId,
+        width: '100%',
+        height: '100%',
+        playerVars: {
+            autoplay: autoplay ? 1 : 0,
+            controls: 1,
+            start: Math.floor(startTime || 0),
+            rel: 0,
+            modestbranding: 1,
+            fs: 1,
+            origin: window.location.origin
+        },
+        events: {
+            onReady: (e) => {
+                if (startTime > 0) e.target.seekTo(startTime, true);
+                if (autoplay) {
+                    stopAudioPlayback(true);
+                    e.target.playVideo();
+                }
+                else e.target.pauseVideo();
+            },
+            onStateChange: (e) => {
+                if (e.data === YT.PlayerState.BUFFERING || e.data === YT.PlayerState.PLAYING) {
+                    stopAudioPlayback(true);
+                }
+
+                const activeSong = currentRoom && Array.isArray(currentRoom.queue)
+                    ? currentRoom.queue[currentSongIndex]
+                    : null;
+                const shouldSyncVideoState = !!(activeSong && activeSong.id && activeSong.id.startsWith('ytv_'));
+
+                if (e.data === YT.PlayerState.ENDED) {
+                    waitForConnection(() => {
+                        if (currentRoom) {
+                            stompClient.send('/app/room.playback', {}, JSON.stringify({
+                                roomCode: currentRoom.roomCode,
+                                action: 'next',
+                                currentTime: 0
+                            }));
+                        }
+                    });
+                } else if (e.data === YT.PlayerState.PLAYING) {
+                    const wasPlaying = isPlaying;
+                    isPlaying = true;
+                    updatePlayPauseIcon();
+                    startProgressTimer();
+                    document.getElementById('sound-waves').classList.add('active');
+
+                    // If playback changed from a direct click inside the iframe,
+                    // sync that state to the room so it doesn't auto-resume unexpectedly.
+                    if (shouldSyncVideoState && !wasPlaying) {
+                        let videoTime = 0;
+                        try { videoTime = e.target.getCurrentTime() || 0; } catch (err) {}
+                        sendPlaybackCommand('play', videoTime);
+                    }
+                } else if (e.data === YT.PlayerState.PAUSED) {
+                    const wasPlaying = isPlaying;
+                    isPlaying = false;
+                    updatePlayPauseIcon();
+                    stopProgressTimer();
+                    document.getElementById('sound-waves').classList.remove('active');
+
+                    if (shouldSyncVideoState && wasPlaying) {
+                        let videoTime = 0;
+                        try { videoTime = e.target.getCurrentTime() || 0; } catch (err) {}
+                        sendPlaybackCommand('pause', videoTime);
+                    }
+                }
+            },
+            onError: (e) => {
+                const code = e && typeof e.data !== 'undefined' ? e.data : 'unknown';
+                console.warn('[YouTube] Player error for video', videoId, 'code:', code);
+                showToast('This YouTube video cannot be played here. Try another video result.', 'error');
+                isPlaying = false;
+                updatePlayPauseIcon();
+                stopProgressTimer();
+                document.getElementById('sound-waves').classList.remove('active');
+            }
+        }
+    });
+}
+
+function loadYtVideo(videoId, startTime, autoplay) {
+    stopAudioPlayback(true);
+    ensureYtApiLoaded();
+    if (!ytPlayerReady || !window.YT || !window.YT.Player) {
+        ytPendingLoad = { videoId, startTime, autoplay };
+        return;
+    }
+    if (ytPlayer && ytPlayerVideoId === videoId) {
+        try {
+            if (Math.abs(ytPlayer.getCurrentTime() - (startTime || 0)) > 2) {
+                ytPlayer.seekTo(startTime || 0, true);
+            }
+            if (autoplay) ytPlayer.playVideo(); else ytPlayer.pauseVideo();
+        } catch(e) {}
+        return;
+    }
+    _createYtPlayer(videoId, startTime, autoplay);
+}
+
+function destroyYtPlayer() {
+    if (ytPlayer) {
+        try { ytPlayer.destroy(); } catch(e) {}
+        ytPlayer = null;
+        ytPlayerVideoId = null;
+    }
+    const wrapper = document.getElementById('yt-video-wrapper');
+    if (wrapper) {
+        const existing = document.getElementById('yt-player');
+        if (existing) existing.remove();
+        const div = document.createElement('div');
+        div.id = 'yt-player';
+        wrapper.appendChild(div);
+    }
+}
+
+function showYtVideoPlayer() {
+    const wrapper = document.getElementById('yt-video-wrapper');
+    if (wrapper) wrapper.classList.remove('hidden');
+    const artwork = document.getElementById('album-artwork');
+    if (artwork) artwork.classList.add('hidden');
+}
+
+function hideYtVideoPlayer() {
+    const wrapper = document.getElementById('yt-video-wrapper');
+    if (wrapper) wrapper.classList.add('hidden');
+    const artwork = document.getElementById('album-artwork');
+    if (artwork) artwork.classList.remove('hidden');
+}
+
+// ===== External Search (JioSaavn + YouTube Music + YouTube Videos) =====
 let searchTimeout = null;
 let _allSearchResults = []; // cache last results for filter re-render
-let _activeFilters = new Set(['jiosaavn', 'youtube']);
+let _activeFilters = new Set(['jiosaavn']);
 let isYouTubeConfigured = false;
 let currentSearchResultTab = 'songs';
 const searchViewHistory = [];
+
+function setSingleActiveSource(source) {
+    let target = source;
+    if (!target || (target !== 'jiosaavn' && target !== 'youtube' && target !== 'youtubevideo')) {
+        target = Array.from(_activeFilters)[0] || 'jiosaavn';
+    }
+    if (!isYouTubeConfigured && (target === 'youtube' || target === 'youtubevideo')) {
+        target = 'jiosaavn';
+    }
+    _activeFilters = new Set([target]);
+    return target;
+}
 
 function cloneSearchResults(results) {
     return Array.isArray(results) ? results.map(song => ({ ...song })) : [];
@@ -774,6 +1062,7 @@ function cloneSearchResults(results) {
 function getFilteredSearchResults(results = _allSearchResults) {
     return (Array.isArray(results) ? results : []).filter(song => {
         if (song.id.startsWith('jio_')) return _activeFilters.has('jiosaavn');
+        if (song.id.startsWith('ytv_')) return _activeFilters.has('youtubevideo');
         if (song.id.startsWith('yt_')) return _activeFilters.has('youtube');
         return true;
     });
@@ -783,13 +1072,14 @@ function renderEmptyFilteredResults(resultsList) {
     resultsList.innerHTML = `<div class="search-no-results">
         <i class="fas fa-filter" style="font-size:2rem;color:#666;margin-bottom:.5rem"></i>
         <p>No results for the selected source.</p>
-        <p style="font-size:.8rem;color:#888">Toggle a source filter above to see results.</p>
+        <p style="font-size:.8rem;color:#888">Select a different source above to see results.</p>
     </div>`;
 }
 
-function updateSourceFilterButtons(hasYouTube = false) {
+function updateSourceFilterButtons(hasYouTube = false, hasYouTubeVideo = false) {
     const jioBtn = document.getElementById('filter-jiosaavn');
     const youTubeBtn = document.getElementById('filter-youtube');
+    const ytvBtn = document.getElementById('filter-youtubevideo');
     if (jioBtn) {
         jioBtn.classList.toggle('active', _activeFilters.has('jiosaavn'));
     }
@@ -798,18 +1088,25 @@ function updateSourceFilterButtons(hasYouTube = false) {
         youTubeBtn.classList.toggle('active', _activeFilters.has('youtube'));
         youTubeBtn.classList.toggle('has-results', !!hasYouTube);
     }
+    if (ytvBtn) {
+        ytvBtn.classList.toggle('disabled', !isYouTubeConfigured);
+        ytvBtn.classList.toggle('active', _activeFilters.has('youtubevideo'));
+        ytvBtn.classList.toggle('has-results', !!hasYouTubeVideo);
+    }
 }
 
 function buildSearchViewSnapshot(mode) {
     const input = document.getElementById('external-search');
     const youTubeBtn = document.getElementById('filter-youtube');
+    const ytvBtn = document.getElementById('filter-youtubevideo');
     return {
         mode,
         query: input ? input.value : '',
         allResults: cloneSearchResults(_allSearchResults),
         activeFilters: Array.from(_activeFilters),
         currentResultTab: currentSearchResultTab,
-        hasYouTube: !!youTubeBtn && youTubeBtn.classList.contains('has-results')
+        hasYouTube: !!youTubeBtn && youTubeBtn.classList.contains('has-results'),
+        hasYouTubeVideo: !!ytvBtn && ytvBtn.classList.contains('has-results')
     };
 }
 
@@ -840,23 +1137,15 @@ function restoreSearchView(snapshot) {
     if (statusEl) statusEl.classList.add('hidden');
 
     currentSearchResultTab = snapshot.currentResultTab || 'songs';
-    _activeFilters = new Set(
-        Array.isArray(snapshot.activeFilters) && snapshot.activeFilters.length > 0
-            ? snapshot.activeFilters
-            : ['jiosaavn']
-    );
-
-    if (!isYouTubeConfigured) {
-        _activeFilters.delete('youtube');
-        if (!_activeFilters.has('jiosaavn')) {
-            _activeFilters.add('jiosaavn');
-        }
-    }
+    const preferredSource = Array.isArray(snapshot.activeFilters) && snapshot.activeFilters.length > 0
+        ? snapshot.activeFilters[0]
+        : 'jiosaavn';
+    setSingleActiveSource(preferredSource);
 
     if (snapshot.mode === 'results') {
         _allSearchResults = cloneSearchResults(snapshot.allResults);
         if (emptyEl) emptyEl.classList.add('hidden');
-        updateSourceFilterButtons(snapshot.hasYouTube);
+        updateSourceFilterButtons(snapshot.hasYouTube, snapshot.hasYouTubeVideo);
         if (resultsList) {
             const filtered = getFilteredSearchResults(_allSearchResults);
             if (filtered.length === 0) {
@@ -880,19 +1169,17 @@ window.toggleSourceFilter = function(source) {
     const btn = document.getElementById('filter-' + source);
     if (!btn) return;
 
-    if (source === 'youtube' && !isYouTubeConfigured) {
+    if ((source === 'youtube' || source === 'youtubevideo') && !isYouTubeConfigured) {
         showToast('YouTube source is currently unavailable on server.', 'info');
         return;
     }
 
-    if (_activeFilters.has(source)) {
-        // keep at least one source active
-        if (_activeFilters.size === 1) return;
-        _activeFilters.delete(source);
-    } else {
-        _activeFilters.add(source);
-    }
-    updateSourceFilterButtons(_allSearchResults.some(song => song.id.startsWith('yt_')));
+    const selected = setSingleActiveSource(source);
+    if (selected !== source) return;
+
+    const hasYT = _allSearchResults.some(song => song.id.startsWith('yt_'));
+    const hasYTV = _allSearchResults.some(song => song.id.startsWith('ytv_'));
+    updateSourceFilterButtons(hasYT, hasYTV);
     if (_allSearchResults.length > 0) {
         const filtered = getFilteredSearchResults(_allSearchResults);
         const resultsList = document.getElementById('search-results');
@@ -952,7 +1239,10 @@ async function searchExternal(preserveCurrentView = true) {
         }
 
         _allSearchResults = cloneSearchResults(songs);
-        updateSourceFilterButtons(songs.some(s => s.id.startsWith('yt_')));
+        updateSourceFilterButtons(
+            songs.some(s => s.id.startsWith('yt_')),
+            songs.some(s => s.id.startsWith('ytv_'))
+        );
 
         const filtered = getFilteredSearchResults(_allSearchResults);
         renderSearchResults(filtered);
@@ -1031,8 +1321,10 @@ function renderSearchResults(songs) {
     html += songs.map(song => {
         const sourceIcon = song.id.startsWith('jio_')
             ? '<span class="source-tag jio">JioSaavn</span>'
+            : song.id.startsWith('ytv_')
+            ? '<span class="source-tag yt">YouTube Video</span>'
             : song.id.startsWith('yt_')
-            ? '<span class="source-tag yt">YouTube</span>'
+            ? '<span class="source-tag yt">YouTube Music</span>'
             : '';
         const albumPart = song.album ? ` <span class="song-meta-album"><i class="fas fa-compact-disc"></i> ${escapeHtml(song.album)}</span>` : '';
         return `
@@ -1121,17 +1413,11 @@ async function checkSources() {
         const data = await res.json();
         isYouTubeConfigured = !!(data.youtubeConfigured ?? data.spotifyConfigured);
 
-        if (isYouTubeConfigured) {
-            if (!_activeFilters.has('youtube')) {
-                _activeFilters.add('youtube');
-            }
-        } else {
-            _activeFilters.delete('youtube');
-            _activeFilters.add('jiosaavn');
-        }
+        setSingleActiveSource(Array.from(_activeFilters)[0] || 'jiosaavn');
 
         const hasYouTubeInResults = _allSearchResults.some(song => song.id.startsWith('yt_'));
-        updateSourceFilterButtons(hasYouTubeInResults);
+        const hasYouTubeVideoInResults = _allSearchResults.some(song => song.id.startsWith('ytv_'));
+        updateSourceFilterButtons(hasYouTubeInResults, hasYouTubeVideoInResults);
 
         if (_allSearchResults.length > 0) {
             const resultsList = document.getElementById('search-results');
@@ -1176,8 +1462,45 @@ function togglePlayPause() {
         return;
     }
 
+    const currentSong = currentRoom.queue[currentSongIndex];
+    const isVideoSong = currentSong && currentSong.id && currentSong.id.startsWith('ytv_');
+    let ct = 0;
+    if (isVideoSong && ytPlayer) {
+        try { ct = ytPlayer.getCurrentTime() || 0; } catch(e) {}
+    } else {
+        ct = audioPlayer.currentTime || currentTime;
+    }
+
     const action = isPlaying ? 'pause' : 'play';
-    sendPlaybackCommand(action, audioPlayer.currentTime || currentTime);
+
+    // For YouTube videos, trigger local play/pause directly from the click gesture
+    // to avoid autoplay-policy blocks before the websocket round trip completes.
+    if (isVideoSong && currentSong) {
+        const videoId = currentSong.id.substring(4);
+        if (action === 'play') {
+            loadYtVideo(videoId, ct, true);
+            try {
+                if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+                    ytPlayer.playVideo();
+                }
+            } catch (err) {
+                console.warn('[YouTube] Local play trigger failed:', err);
+            }
+        } else {
+            try {
+                if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+                    ytPlayer.pauseVideo();
+                }
+            } catch (err) {
+                console.warn('[YouTube] Local pause trigger failed:', err);
+            }
+        }
+
+        // The iframe state-change handler sends the matching play/pause command.
+        return;
+    }
+
+    sendPlaybackCommand(action, ct);
 }
 
 function nextSong() {
@@ -1193,7 +1516,15 @@ function previousSong() {
         showToast('Only the host can switch songs', 'info');
         return;
     }
-    if (audioPlayer.currentTime > 3) {
+    const currentSong = currentRoom && currentRoom.queue ? currentRoom.queue[currentSongIndex] : null;
+    const isVideoSong = currentSong && currentSong.id && currentSong.id.startsWith('ytv_');
+    let ct = 0;
+    if (isVideoSong && ytPlayer) {
+        try { ct = ytPlayer.getCurrentTime() || 0; } catch(e) {}
+    } else {
+        ct = audioPlayer.currentTime;
+    }
+    if (ct > 3) {
         sendPlaybackCommand('seek', 0);
     } else {
         sendPlaybackCommand('previous', 0);
@@ -1205,11 +1536,21 @@ function playSongAtIndex(index) {
         showToast('Only the host can choose the next song', 'info');
         return;
     }
+    const selectedSong = currentRoom && Array.isArray(currentRoom.queue)
+        ? currentRoom.queue[index]
+        : null;
+    const isSelectedVideo = !!(selectedSong && selectedSong.id && selectedSong.id.startsWith('ytv_'));
+
     // If a song is currently playing, don't interrupt it
-    if (isPlaying && currentSongIndex >= 0) {
+    if (isPlaying && currentSongIndex >= 0 && !isSelectedVideo) {
         showToast('Song will play when its turn comes in the queue', 'info');
         return;
     }
+
+    if (isSelectedVideo) {
+        stopAudioPlayback(true);
+    }
+
     sendPlaybackCommand('select', index);
 }
 
@@ -1226,17 +1567,29 @@ function seekTo(event) {
     if (pointerX === null) return;
 
     const pos = Math.max(0, Math.min(1, (pointerX - rect.left) / rect.width));
-    const totalDuration = audioPlayer.duration || duration;
+
+    const currentSong = currentRoom && currentRoom.queue ? currentRoom.queue[currentSongIndex] : null;
+    const isVideoSong = currentSong && currentSong.id && currentSong.id.startsWith('ytv_');
+    let totalDuration;
+    if (isVideoSong && ytPlayer) {
+        try { totalDuration = ytPlayer.getDuration() || duration; } catch(e) { totalDuration = duration; }
+    } else {
+        totalDuration = audioPlayer.duration || duration;
+    }
     if (!totalDuration || totalDuration <= 0) return;
 
     const seekTime = pos * totalDuration;
 
     // Apply immediately for host responsiveness; room sync keeps everyone aligned.
     currentTime = seekTime;
-    try {
-        audioPlayer.currentTime = seekTime;
-    } catch (err) {
-        console.warn('[Playback] Failed to apply local seek:', err);
+    if (isVideoSong && ytPlayer) {
+        try { ytPlayer.seekTo(seekTime, true); } catch(e) {}
+    } else {
+        try {
+            audioPlayer.currentTime = seekTime;
+        } catch (err) {
+            console.warn('[Playback] Failed to apply local seek:', err);
+        }
     }
     updateProgress();
 
@@ -1280,12 +1633,29 @@ function updateProgress() {
     const fill = document.getElementById('progress-fill');
     const thumb = document.getElementById('progress-thumb');
     const timeCurrent = document.getElementById('time-current');
+    const timeTotal = document.getElementById('time-total');
 
-    const audioDur = audioPlayer.duration || duration;
-    const audioTime = audioPlayer.currentTime || currentTime;
+    const currentSong = currentRoom && currentRoom.queue ? currentRoom.queue[currentSongIndex] : null;
+    const isVideoSong = currentSong && currentSong.id && currentSong.id.startsWith('ytv_');
+    let audioTime, audioDur;
+    if (isVideoSong && ytPlayer) {
+        try {
+            audioTime = ytPlayer.getCurrentTime() || currentTime;
+            audioDur = ytPlayer.getDuration() || duration;
+        } catch(e) {
+            audioTime = currentTime;
+            audioDur = duration;
+        }
+    } else {
+        audioDur = audioPlayer.duration || duration;
+        audioTime = audioPlayer.currentTime || currentTime;
+    }
     const pct = audioDur > 0 ? (audioTime / audioDur) * 100 : 0;
     fill.style.width = pct + '%';
     timeCurrent.textContent = formatTime(Math.floor(audioTime));
+    if (timeTotal && audioDur > 0) {
+        timeTotal.textContent = formatTime(Math.floor(audioDur));
+    }
 }
 
 function updatePlayPauseIcon() {
@@ -1439,22 +1809,13 @@ function handlePlaybackUpdate(data) {
         : null;
     const song = incomingSong || fallbackSong;
 
-    if (song && song.title) {
-        document.getElementById('no-song-placeholder').classList.add('hidden');
-        document.getElementById('song-title').textContent = song.title;
-        document.getElementById('song-artist').textContent = song.artist;
-        document.getElementById('song-album').textContent = song.album || '';
-        document.getElementById('album-cover-img').src = song.coverUrl || '';
-        document.getElementById('now-playing-bg').style.backgroundImage = `url(${song.coverUrl})`;
-        duration = song.durationSeconds || 0;
-        document.getElementById('time-total').textContent = formatTime(duration);
+    const isVideoSong = !!(song && song.id && song.id.startsWith('ytv_'));
 
-        // Load new audio if song changed
-        if (song.audioUrl && audioPlayer.getAttribute('data-song-id') !== song.id) {
-            audioPlayer.setAttribute('data-song-id', song.id);
-            audioPlayer.src = song.audioUrl;
-            audioPlayer.load();
-        }
+    if (song && song.title) {
+        // Keep UI rendering in one place so both /state and /playback updates treat video songs the same.
+        updateNowPlaying(song, ps);
+    } else if (currentRoom && Array.isArray(currentRoom.queue) && currentRoom.queue.length === 0) {
+        updateNowPlaying(null, ps);
     }
 
     if (ps) {
@@ -1462,38 +1823,46 @@ function handlePlaybackUpdate(data) {
         currentSongIndex = ps.currentSongIndex;
         updatePlayPauseIcon();
 
-        // Only reload audio and seek if song actually changed
-        if (song && song.audioUrl && audioPlayer.getAttribute('data-song-id') !== song.id) {
-            currentTime = ps.currentTime || 0;
-            audioPlayer.setAttribute('data-song-id', song.id);
-            audioPlayer.src = song.audioUrl;
-            audioPlayer.load();
-
-            if (currentTime > 0) {
-                audioPlayer.currentTime = currentTime;
+        if (isVideoSong) {
+            stopAudioPlayback(true);
+            const serverTime = Number(ps.currentTime);
+            if (Number.isFinite(serverTime) && serverTime >= 0) {
+                currentTime = serverTime;
+                try {
+                    if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+                        const localVideoTime = ytPlayer.getCurrentTime() || 0;
+                        if (Math.abs(localVideoTime - serverTime) > 1.2) {
+                            ytPlayer.seekTo(serverTime, true);
+                        }
+                    }
+                } catch (err) {
+                    console.warn('[Playback] Failed to apply synced video time:', err);
+                }
             }
 
             if (isPlaying) {
-                const playPromise = audioPlayer.play();
-                if (playPromise !== undefined) {
-                    playPromise.catch((err) => {
-                        console.error('Failed to sync audio playback:', err);
-                        setTimeout(() => {
-                            audioPlayer.play().catch(() => {
-                                requestUserAudioResume();
-                            });
-                        }, 300);
-                    });
+                try {
+                    if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+                        ytPlayer.playVideo();
+                    }
+                } catch (err) {
+                    console.warn('[Playback] Failed to play video:', err);
                 }
                 startProgressTimer();
                 document.getElementById('sound-waves').classList.add('active');
             } else {
-                audioPlayer.pause();
+                try {
+                    if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+                        ytPlayer.pauseVideo();
+                    }
+                } catch (err) {
+                    console.warn('[Playback] Failed to pause video:', err);
+                }
                 stopProgressTimer();
                 document.getElementById('sound-waves').classList.remove('active');
             }
-        } else {
-            // Same song — still sync position so seek works across clients.
+        } else if (song && song.audioUrl) {
+            // Same audio song — sync position so seek works across clients.
             const serverTime = Number(ps.currentTime);
             if (Number.isFinite(serverTime) && serverTime >= 0) {
                 const knownDuration = (Number.isFinite(audioPlayer.duration) && audioPlayer.duration > 0)
@@ -1667,9 +2036,7 @@ function leaveRoom() {
         stompClient = null;
     }
     stopRoomStatePolling();
-    audioPlayer.pause();
-    audioPlayer.src = '';
-    audioPlayer.removeAttribute('data-song-id');
+    stopAudioPlayback(true);
     currentRoom = null;
     currentUser = null;
     currentUserId = null;

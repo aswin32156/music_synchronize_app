@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MusicSync - Listen Together</title>
-    <link rel="stylesheet" href="/css/style.css?v=20260313">
+    <link rel="stylesheet" href="/css/style.css?v=20260314-02">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
@@ -267,6 +267,10 @@
                                     <small>Search and add songs to get started</small>
                                 </div>
                             </div>
+                            <!-- YouTube Video Player (shown when a ytv_ song is playing) -->
+                            <div class="yt-video-wrapper hidden" id="yt-video-wrapper">
+                                <div id="yt-player"></div>
+                            </div>
                             <div class="sound-waves" id="sound-waves">
                                 <span></span><span></span><span></span><span></span><span></span>
                                 <span></span><span></span><span></span><span></span><span></span>
@@ -303,7 +307,7 @@
 
                             <div class="host-indicator" id="host-indicator">
                                 <i class="fas fa-crown"></i>
-                                <span>Listeners can play/pause and add songs. Only host can skip or seek.</span>
+                                <span>Listeners can play/pause, add, and move songs. Only host can remove, skip, or seek.</span>
                             </div>
                         </div>
                     </div>
@@ -347,11 +351,14 @@
                             </button>
                         </div>
                         <div class="search-sources" id="search-sources">
-                            <button class="source-filter active" id="filter-jiosaavn" onclick="toggleSourceFilter('jiosaavn')" title="Toggle JioSaavn results">
+                            <button class="source-filter active" id="filter-jiosaavn" onclick="toggleSourceFilter('jiosaavn')" title="Show JioSaavn results only">
                                 <i class="fas fa-music"></i> JioSaavn
                             </button>
-                            <button class="source-filter active" id="filter-youtube" onclick="toggleSourceFilter('youtube')" title="Toggle YouTube Music results">
+                            <button class="source-filter" id="filter-youtube" onclick="toggleSourceFilter('youtube')" title="Show YouTube Music results only">
                                 <i class="fab fa-youtube"></i> YouTube Music
+                            </button>
+                            <button class="source-filter" id="filter-youtubevideo" onclick="toggleSourceFilter('youtubevideo')" title="Show YouTube Videos results only">
+                                <i class="fab fa-youtube"></i> YouTube Videos
                             </button>
                         </div>
                     </div>
@@ -409,6 +416,6 @@
         <span>Connecting...</span>
     </div>
 
-    <script src="js/app.js?v=20260313-28"></script>
+    <script src="js/app.js?v=20260314-11"></script>
 </body>
 </html>

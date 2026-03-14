@@ -92,6 +92,12 @@ public class MusicService {
                 externalSongsCache.put(song.getId(), song);
                 return song;
             }
+        } else if (id.startsWith("ytv_")) {
+            Song song = youTubeService.getVideoContentById(id.substring(4));
+            if (song != null) {
+                externalSongsCache.put(song.getId(), song);
+                return song;
+            }
         }
         return null;
     }
@@ -120,6 +126,10 @@ public class MusicService {
         List<Song> ytResults = youTubeService.searchSongs(query, limit);
         results.addAll(ytResults);
 
+        // Search YouTube Videos (playable via IFrame embed)
+        List<Song> ytvResults = youTubeService.searchVideoContent(query, limit);
+        results.addAll(ytvResults);
+
         // Cache all results so they can be retrieved by ID when adding to queue
         for (Song song : results) {
             externalSongsCache.put(song.getId(), song);
@@ -134,6 +144,7 @@ public class MusicService {
         sources.add("jiosaavn");
         if (youtubeConfigured) {
             sources.add("youtube");
+            sources.add("youtubevideo");
         }
         return Map.of(
             "sources", sources,

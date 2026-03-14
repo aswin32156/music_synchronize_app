@@ -167,21 +167,34 @@ public class WebSocketController {
     }
 
     @MessageMapping("/room.queue.remove")
-    public void removeFromQueue(@Payload QueueRequest request) {
+    public void removeFromQueue(@Payload QueueRequest request,
+                                SimpMessageHeaderAccessor headerAccessor) {
         String roomCode = request.getRoomCode();
+        if (roomCode == null || roomCode.isBlank()) return;
+
+        String songId = request.getSongId();
+        if (songId == null || songId.isBlank()) return;
+
         Room room = roomService.getRoom(roomCode);
         if (room == null) return;
+
+        String sessionId = headerAccessor.getSessionId();
+        User sender = roomService.findUserBySession(roomCode, sessionId);
+        User host = room.getHost();
+        if (sender == null || host == null || !host.getId().equals(sender.getId())) {
+            return;
+        }
 
         int removedIndex = -1;
         List<Song> q = room.getQueue();
         for (int i = 0; i < q.size(); i++) {
-            if (q.get(i).getId().equals(request.getSongId())) {
+            if (q.get(i).getId().equals(songId)) {
                 removedIndex = i;
                 break;
             }
         }
 
-        room.removeSongFromQueue(request.getSongId());
+        room.removeSongFromQueue(songId);
 
         // Adjust currentSongIndex if needed
         if (removedIndex >= 0) {

@@ -460,4 +460,129 @@ public class YouTubeService {
         }
         return null;
     }
+
+    // ===== YouTube Video Content (ytv_ prefix) =====
+
+    public List<Song> searchVideoContent(String query, int limit) {
+        List<Song> songs = new ArrayList<>();
+        if (query == null || query.isBlank()) return songs;
+
+        int cappedLimit = Math.max(1, Math.min(limit, 50));
+        Set<String> seenIds = new LinkedHashSet<>();
+
+        if (isApiConfigured()) {
+            List<Song> apiSongs = searchVideoContentWithApi(query, cappedLimit);
+            for (Song song : apiSongs) {
+                if (seenIds.add(song.getId())) songs.add(song);
+                if (songs.size() >= cappedLimit) return songs;
+            }
+        }
+
+        List<Song> webSongs = searchVideoContentFromWeb(query, cappedLimit);
+        for (Song song : webSongs) {
+            if (seenIds.add(song.getId())) songs.add(song);
+            if (songs.size() >= cappedLimit) break;
+        }
+
+        return songs;
+    }
+
+    private List<Song> searchVideoContentWithApi(String query, int limit) {
+        List<Song> songs = new ArrayList<>();
+        try {
+            String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
+            String url = API_URL + "/search?part=snippet&type=video&maxResults=" + limit
+                    + "&videoEmbeddable=true&videoSyndicated=true"
+                    + "&q=" + encodedQuery + "&key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
+            String response = restTemplate.getForObject(url, String.class);
+            if (response == null) return songs;
+            JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+            JsonArray items = json.has("items") ? json.getAsJsonArray("items") : null;
+            if (items == null) return songs;
+            for (int i = 0; i < items.size(); i++) {
+                JsonObject item = items.get(i).getAsJsonObject();
+                Song song = parseVideoContentSearchItem(item);
+                if (song != null) songs.add(song);
+            }
+        } catch (Exception e) {
+            log.warn("YouTube Data API video content search failed for query '{}': {}", query, e.getMessage());
+        }
+        return songs;
+    }
+
+    private List<Song> searchVideoContentFromWeb(String query, int limit) {
+        List<Song> songs = new ArrayList<>();
+        try {
+            String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
+            String response = restTemplate.getForObject(WEB_SEARCH_URL + encodedQuery, String.class);
+            if (response == null || response.isBlank()) return songs;
+            String initialData = extractInitialDataJson(response);
+            if (initialData == null || initialData.isBlank()) return songs;
+            JsonObject initialDataObject = JsonParser.parseString(initialData).getAsJsonObject();
+            List<JsonObject> renderers = new ArrayList<>();
+            collectVideoRenderers(initialDataObject, renderers);
+            Set<String> seenVideoIds = new LinkedHashSet<>();
+            for (JsonObject renderer : renderers) {
+                Song song = parseVideoContentRenderer(renderer);
+                if (song == null) continue;
+                if (seenVideoIds.add(song.getId())) songs.add(song);
+                if (songs.size() >= limit) break;
+            }
+        } catch (Exception e) {
+            log.warn("YouTube web fallback video content search failed for query '{}': {}", query, e.getMessage());
+        }
+        return songs;
+    }
+
+    private Song parseVideoContentSearchItem(JsonObject item) {
+        if (!item.has("id") || !item.get("id").isJsonObject()) return null;
+        JsonObject idObj = item.getAsJsonObject("id");
+        String videoId = getStringField(idObj, "videoId");
+        if (videoId == null || videoId.isEmpty()) return null;
+        if (!item.has("snippet") || !item.get("snippet").isJsonObject()) return null;
+        JsonObject snippet = item.getAsJsonObject("snippet");
+        String title = getStringField(snippet, "title");
+        if (title == null || title.isEmpty()) return null;
+        String artist = getStringField(snippet, "channelTitle");
+        if (artist == null || artist.isEmpty()) artist = "YouTube";
+        String coverUrl = getThumbnailUrl(snippet);
+        return new Song("ytv_" + videoId, title, artist, "YouTube Video", coverUrl, 0, "");
+    }
+
+    private Song parseVideoContentRenderer(JsonObject renderer) {
+        String videoId = getStringField(renderer, "videoId");
+        if (videoId == null || videoId.isBlank()) return null;
+        String title = getTextField(renderer.get("title"));
+        if (title == null || title.isBlank()) return null;
+        String artist = getTextField(renderer.get("ownerText"));
+        if (artist == null || artist.isBlank()) artist = getTextField(renderer.get("longBylineText"));
+        if (artist == null || artist.isBlank()) artist = "YouTube";
+        int duration = parseDurationLabel(getTextField(renderer.get("lengthText")));
+        String coverUrl = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
+        return new Song("ytv_" + videoId, title, artist, "YouTube Video", coverUrl, duration, "");
+    }
+
+    public Song getVideoContentById(String videoId) {
+        if (videoId == null || videoId.isBlank()) return null;
+        try {
+            String watchUrl = "https://www.youtube.com/watch?v=" + videoId;
+            String url = OEMBED_URL + URLEncoder.encode(watchUrl, StandardCharsets.UTF_8) + "&format=json";
+            String response = restTemplate.getForObject(url, String.class);
+            if (response != null) {
+                JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+                String title = getStringField(json, "title");
+                if (title != null && !title.isBlank()) {
+                    String artist = getStringField(json, "author_name");
+                    if (artist == null || artist.isBlank()) artist = "YouTube";
+                    String coverUrl = getStringField(json, "thumbnail_url");
+                    if (coverUrl == null) coverUrl = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
+                    return new Song("ytv_" + videoId, title, artist, "YouTube Video", coverUrl, 0, "");
+                }
+            }
+        } catch (Exception e) {
+            log.warn("YouTube oEmbed getVideoContentById failed for id '{}': {}", videoId, e.getMessage());
+        }
+        String coverUrl = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
+        return new Song("ytv_" + videoId, "YouTube Video", "YouTube", "YouTube Video", coverUrl, 0, "");
+    }
 }

@@ -1227,10 +1227,13 @@ body {
     align-items: center;
     justify-content: center;
     transition: var(--transition);
-    opacity: 0.45;
+    opacity: 0.8;
     flex-shrink: 0;
 }
 .song-item:hover .song-item-action {
+    opacity: 1;
+}
+.song-item:focus-within .song-item-action {
     opacity: 1;
 }
 .song-item-action:hover {
@@ -1240,6 +1243,13 @@ body {
 .song-item-action.remove:hover {
     background: rgba(233, 30, 99, 0.2);
     color: var(--danger);
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .song-item-action {
+        opacity: 1;
+        background: rgba(255,255,255,0.06);
+    }
 }
 
 /* Library Search */
@@ -1347,6 +1357,37 @@ body {
     opacity: 0.28;
     filter: grayscale(1);
     cursor: not-allowed;
+}
+#filter-youtubevideo.active {
+    background: rgba(255, 0, 0, 0.15);
+    border-color: #FF0000;
+    color: #FF0000;
+}
+#filter-youtubevideo.disabled {
+    opacity: 0.28;
+    filter: grayscale(1);
+    cursor: not-allowed;
+}
+
+/* YouTube Video Player in Now Playing */
+.yt-video-wrapper {
+    width: 320px;
+    aspect-ratio: 16 / 9;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-lg);
+    background: #000;
+    flex-shrink: 0;
+    position: relative;
+}
+.yt-video-wrapper #yt-player,
+.yt-video-wrapper iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
 }
 #filter-youtube.disabled:hover {
     opacity: 0.28;
@@ -1819,6 +1860,9 @@ body {
         width: 200px;
         height: 200px;
     }
+    .yt-video-wrapper {
+        width: 240px;
+    }
     .song-title {
         font-size: 24px;
     }
@@ -1866,5 +1910,21 @@ body {
     }
     #listeners-modal-title {
         font-size: 18px;
+    }
+    .song-item {
+        gap: 10px;
+        padding: 10px;
+    }
+    .song-item-added {
+        display: none;
+    }
+    .song-item-duration {
+        margin-right: 4px;
+        font-size: 12px;
+    }
+    .song-item-action {
+        width: 30px;
+        height: 30px;
+        opacity: 1;
     }
 }
