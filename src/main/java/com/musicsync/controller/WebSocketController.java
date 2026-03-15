@@ -138,6 +138,15 @@ public class WebSocketController {
         if (room == null) return;
 
         Song song = musicService.getSongById(request.getSongId());
+        if (song == null) {
+            song = musicService.resolveSongFromMetadata(
+                    request.getSongId(),
+                    request.getTitle(),
+                    request.getArtist(),
+                    request.getAlbum(),
+                    request.getCoverUrl(),
+                    request.getDurationSeconds());
+        }
         if (song == null) return;
 
         Song queuedSong = new Song(

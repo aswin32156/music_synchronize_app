@@ -1568,12 +1568,22 @@ const pendingAddSongs = new Set();
 
 function addToQueue(songId) {
     if (pendingAddSongs.has(songId)) return; // prevent duplicate queuing
+
+    const selectedSong = Array.isArray(_allSearchResults)
+        ? _allSearchResults.find(song => song && song.id === songId)
+        : null;
+
     const doAdd = () => {
         pendingAddSongs.delete(songId);
         stompClient.send('/app/room.queue.add', {}, JSON.stringify({
             roomCode: currentRoom.roomCode,
             songId: songId,
-            username: currentUser
+            username: currentUser,
+            title: selectedSong ? selectedSong.title : undefined,
+            artist: selectedSong ? selectedSong.artist : undefined,
+            album: selectedSong ? selectedSong.album : undefined,
+            coverUrl: selectedSong ? selectedSong.coverUrl : undefined,
+            durationSeconds: selectedSong ? (selectedSong.durationSeconds || 0) : 0
         }));
         showToast('Song added to queue!', 'success');
     };

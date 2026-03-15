@@ -146,6 +146,47 @@ public class MusicService {
         return null;
     }
 
+    public Song resolveSongFromMetadata(String id,
+                                        String title,
+                                        String artist,
+                                        String album,
+                                        String coverUrl,
+                                        int durationSeconds) {
+        if (id == null || id.isBlank()) return null;
+
+        String normalizedTitle = title != null ? title.trim() : "";
+        String normalizedArtist = artist != null ? artist.trim() : "";
+        String normalizedAlbum = album != null ? album.trim() : "";
+        String normalizedCover = coverUrl != null ? coverUrl.trim() : "";
+        int normalizedDuration = Math.max(0, durationSeconds);
+
+        Song resolved = null;
+
+        if (id.startsWith("yt_")) {
+            resolved = youTubeService.resolveSongFromMetadata(
+                    id.substring(3),
+                    normalizedTitle,
+                    normalizedArtist,
+                    normalizedCover,
+                    normalizedDuration);
+        } else if (id.startsWith("ytv_")) {
+            String videoId = id.substring(4);
+            String safeTitle = normalizedTitle.isBlank() ? "YouTube Video" : normalizedTitle;
+            String safeArtist = normalizedArtist.isBlank() ? "YouTube" : normalizedArtist;
+            String safeAlbum = normalizedAlbum.isBlank() ? "YouTube Video" : normalizedAlbum;
+            String safeCover = normalizedCover.isBlank()
+                    ? "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg"
+                    : normalizedCover;
+            resolved = new Song(id, safeTitle, safeArtist, safeAlbum, safeCover, normalizedDuration, "");
+        }
+
+        if (resolved != null && resolved.getId() != null && !resolved.getId().isBlank()) {
+            externalSongsCache.put(resolved.getId(), resolved);
+        }
+
+        return resolved;
+    }
+
     public List<Song> searchSongs(String query) {
         if (query == null || query.isBlank()) {
             return getLibrary();
