@@ -1371,7 +1371,7 @@ body {
 
 /* YouTube Video Player in Now Playing */
 .yt-video-wrapper {
-    width: 320px;
+    width: min(100%, 420px);
     aspect-ratio: 16 / 9;
     border-radius: var(--radius-lg);
     overflow: hidden;
@@ -1388,6 +1388,30 @@ body {
     width: 100%;
     height: 100%;
     border: none;
+}
+
+/* Larger focused layout when YouTube video is active */
+.now-playing-content.yt-video-mode {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 22px;
+    max-width: 920px;
+}
+.now-playing-content.yt-video-mode .album-artwork-container {
+    width: min(100%, 780px);
+}
+.now-playing-content.yt-video-mode .yt-video-wrapper {
+    width: 100%;
+}
+.now-playing-content.yt-video-mode .song-details {
+    width: min(100%, 860px);
+}
+.now-playing-content.yt-video-mode .playback-controls {
+    justify-content: center;
+}
+.now-playing-content.yt-video-mode .host-indicator {
+    margin: 0 auto;
 }
 #filter-youtube.disabled:hover {
     opacity: 0.28;
@@ -1861,7 +1885,7 @@ body {
         height: 200px;
     }
     .yt-video-wrapper {
-        width: 240px;
+        width: min(100%, 360px);
     }
     .song-title {
         font-size: 24px;
@@ -1931,15 +1955,13 @@ body {
 
 /* ===== Mobile: Full-width YouTube Video Player ===== */
 @media (max-width: 768px) {
-    .album-artwork-container {
-        width: 100%;
-    }
-    .yt-video-wrapper {
-        width: 100%;
-        border-radius: var(--radius-md);
-    }
-    /* Tighten horizontal padding in now-playing when video is showing */
-    .now-playing-section:has(#yt-video-wrapper:not(.hidden)) {
+    .now-playing-section.yt-video-active {
         padding: 16px 8px 12px;
+    }
+    .now-playing-content.yt-video-mode .album-artwork-container {
+        width: 100%;
+    }
+    .now-playing-content.yt-video-mode .yt-video-wrapper {
+        border-radius: var(--radius-md);
     }
 }

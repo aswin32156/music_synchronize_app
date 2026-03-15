@@ -1149,6 +1149,10 @@ function showYtVideoPlayer() {
     if (wrapper) wrapper.classList.remove('hidden');
     const artwork = document.getElementById('album-artwork');
     if (artwork) artwork.classList.add('hidden');
+    const nowPlayingContent = document.querySelector('.now-playing-content');
+    if (nowPlayingContent) nowPlayingContent.classList.add('yt-video-mode');
+    const nowPlayingSection = document.querySelector('.now-playing-section');
+    if (nowPlayingSection) nowPlayingSection.classList.add('yt-video-active');
 }
 
 function hideYtVideoPlayer() {
@@ -1156,6 +1160,10 @@ function hideYtVideoPlayer() {
     if (wrapper) wrapper.classList.add('hidden');
     const artwork = document.getElementById('album-artwork');
     if (artwork) artwork.classList.remove('hidden');
+    const nowPlayingContent = document.querySelector('.now-playing-content');
+    if (nowPlayingContent) nowPlayingContent.classList.remove('yt-video-mode');
+    const nowPlayingSection = document.querySelector('.now-playing-section');
+    if (nowPlayingSection) nowPlayingSection.classList.remove('yt-video-active');
 }
 
 // ===== External Search (JioSaavn + YouTube Music + YouTube Videos) =====
