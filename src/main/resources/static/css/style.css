@@ -812,10 +812,10 @@ body {
     bottom: 0;
     background-size: cover;
     background-position: center;
-    filter: blur(56px) brightness(0.35);
-    transform: scale(1.35);
+    filter: blur(80px) brightness(0.3);
+    transform: scale(1.5);
     opacity: 0.6;
-    transition: background-image 0.7s ease;
+    transition: background-image 1s ease;
 }
 .now-playing-content {
     position: relative;
@@ -897,11 +897,7 @@ body {
     width: 4px;
     background: var(--accent);
     border-radius: 2px;
-    animation: wave 1.4s ease-in-out infinite;
-    animation-play-state: paused;
-}
-.sound-waves.active span {
-    animation-play-state: running;
+    animation: wave 1s ease-in-out infinite;
 }
 .sound-waves span:nth-child(1) { animation-delay: 0s; }
 .sound-waves span:nth-child(2) { animation-delay: 0.1s; }
@@ -923,9 +919,6 @@ body {
 .song-details {
     flex: 1;
     min-width: 0;
-}
-.mobile-player-drag-handle {
-    display: none;
 }
 .song-title {
     font-size: 32px;
@@ -1100,15 +1093,6 @@ body {
     display: block;
 }
 
-.mobile-only {
-    display: none;
-}
-
-body.mobile-player-dragging,
-body.mobile-player-dragging * {
-    user-select: none !important;
-}
-
 /* Queue Empty State */
 .queue-empty {
     text-align: center;
@@ -1156,12 +1140,6 @@ body.mobile-player-dragging * {
 }
 .song-item.dragging {
     opacity: 0.4;
-}
-.song-item.listener-queue-item {
-    cursor: default;
-}
-.song-item.listener-queue-item:hover {
-    background: rgba(255,255,255,0.03);
 }
 .song-item.drag-over-top {
     border-top: 2px solid var(--accent);
@@ -1402,22 +1380,6 @@ body.mobile-player-dragging * {
     flex-shrink: 0;
     position: relative;
 }
-.yt-player-placeholder {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    color: rgba(255, 255, 255, 0.8);
-    background: radial-gradient(circle at center, rgba(255, 0, 0, 0.16), rgba(0, 0, 0, 0.92));
-    font-size: 13px;
-}
-.yt-player-placeholder i {
-    font-size: 26px;
-    color: #ff0000;
-}
 .yt-video-wrapper #yt-player,
 .yt-video-wrapper iframe {
     position: absolute;
@@ -1429,18 +1391,6 @@ body.mobile-player-dragging * {
 }
 #filter-youtube.disabled:hover {
     opacity: 0.28;
-}
-
-/* Reduce non-essential rendering work while a YouTube video is active */
-.video-performance-mode .now-playing-bg {
-    filter: blur(40px) brightness(0.4);
-    transform: scale(1.2);
-}
-.video-performance-mode .chat-msg {
-    animation: none;
-}
-.video-performance-mode .sound-waves span {
-    animation-duration: 1.8s;
 }
 
 /* Search Status */
@@ -1886,24 +1836,6 @@ body.mobile-player-dragging * {
     color: var(--danger);
 }
 
-@media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-        scroll-behavior: auto !important;
-    }
-
-    .now-playing-bg {
-        filter: blur(24px) brightness(0.45);
-        transform: scale(1.08);
-    }
-
-    .sound-waves {
-        opacity: 0.35;
-    }
-}
-
 /* ===== Responsive ===== */
 @media (max-width: 1024px) {
     .home-hero {
@@ -1964,126 +1896,14 @@ body.mobile-player-dragging * {
     .room-sidebar {
         display: none;
     }
-    .room-main {
-        padding-top: 10px;
-    }
     .now-playing-section {
-        --mobile-player-x: 0px;
-        --mobile-player-y: 0px;
-        position: fixed;
-        top: calc(env(safe-area-inset-top, 0px) + 68px);
-        left: 12px;
-        width: min(360px, calc(100vw - 24px));
-        min-height: 0;
-        max-height: 76vh;
-        overflow: auto;
-        padding: 14px;
-        border-radius: 18px;
-        border: 1px solid rgba(255,255,255,0.14);
-        background: rgba(10, 10, 16, 0.9);
-        backdrop-filter: blur(14px);
-        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
-        z-index: 220;
-        transform: translate3d(var(--mobile-player-x), var(--mobile-player-y), 0);
-    }
-    .now-playing-section.mobile-player-dragging {
-        transition: none;
-    }
-    .now-playing-bg,
-    .sound-waves,
-    .song-album,
-    .host-indicator {
-        display: none;
-    }
-    .now-playing-content {
-        gap: 12px;
-        align-items: flex-start;
-    }
-    .album-artwork {
-        width: 82px;
-        height: 82px;
-        border-radius: 12px;
-    }
-    .yt-video-wrapper {
-        width: 82px;
-        border-radius: 12px;
-    }
-    .song-title {
-        font-size: 16px;
-        line-height: 1.3;
-        margin-bottom: 4px;
-        white-space: normal;
-    }
-    .song-artist {
-        font-size: 13px;
-        margin-bottom: 10px;
-    }
-    .progress-container {
-        gap: 8px;
-        margin-bottom: 10px;
-    }
-    .time-current,
-    .time-total {
-        font-size: 11px;
-        min-width: 28px;
-    }
-    .playback-controls {
-        justify-content: flex-start;
-        gap: 10px;
-        margin-bottom: 0;
-    }
-    .btn-control {
-        width: 40px;
-        height: 40px;
-        font-size: 16px;
-    }
-    .btn-play {
-        width: 46px;
-        height: 46px;
-        font-size: 18px;
-    }
-    .mobile-player-drag-handle {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        border: none;
-        padding: 5px 10px;
-        border-radius: 999px;
-        background: rgba(255,255,255,0.11);
-        color: var(--text-secondary);
-        font-size: 11px;
-        letter-spacing: 0.4px;
-        text-transform: uppercase;
-        cursor: grab;
-        margin-bottom: 8px;
-        touch-action: none;
-    }
-    .mobile-player-drag-handle:active {
-        cursor: grabbing;
-    }
-    .mobile-only {
-        display: inline-flex;
+        padding: 20px;
     }
     .tab-content {
         padding: 20px;
     }
     .content-tabs {
-        position: sticky;
-        top: 0;
-        z-index: 15;
-        background: rgba(12, 12, 18, 0.9);
-        backdrop-filter: blur(10px);
-        padding: 0 16px;
-    }
-    .mobile-chat-panel.active {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        min-height: calc(100vh - 180px);
-    }
-    .mobile-chat-panel .chat-messages {
-        min-height: 42vh;
-        max-height: calc(100vh - 320px);
+        padding: 0 20px;
     }
     .listeners-modal {
         padding: 14px;
@@ -2106,457 +1926,5 @@ body.mobile-player-dragging * {
         width: 30px;
         height: 30px;
         opacity: 1;
-    }
-}
-
-/* ===== Mobile Room Layout Overrides (Desktop Preserved) ===== */
-.mobile-room-header,
-.mobile-search-shortcut,
-.mobile-queue-preview,
-.mobile-pill-btn,
-.mobile-icon-btn {
-    display: none;
-}
-
-@media (max-width: 1024px) {
-    .room-layout {
-        grid-template-columns: 1fr;
-    }
-    .room-sidebar {
-        display: none;
-    }
-    .room-main {
-        padding-bottom: 26px;
-    }
-
-    .mobile-room-header {
-        display: block;
-        position: sticky;
-        top: 0;
-        z-index: 80;
-        padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 12px;
-        background: linear-gradient(180deg, rgba(6, 6, 8, 0.98) 0%, rgba(10, 10, 14, 0.9) 100%);
-        border-bottom: 1px solid rgba(255,255,255,0.08);
-        backdrop-filter: blur(14px);
-    }
-    .mobile-room-header-main {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-    }
-    .mobile-room-title-block {
-        min-width: 0;
-    }
-    .mobile-room-label {
-        font-size: 11px;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: var(--text-muted);
-        margin-bottom: 3px;
-    }
-    .mobile-room-title-block h3 {
-        font-size: 18px;
-        line-height: 1.2;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-    .mobile-room-header-actions {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .mobile-pill-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        height: 36px;
-        padding: 0 12px;
-        border-radius: 999px;
-        border: 1px solid rgba(29, 185, 84, 0.42);
-        background: rgba(29, 185, 84, 0.14);
-        color: var(--accent);
-        font-size: 13px;
-        font-weight: 700;
-        cursor: pointer;
-    }
-    .mobile-icon-btn {
-        display: inline-flex;
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        border: 1px solid rgba(255,255,255,0.18);
-        background: rgba(255,255,255,0.08);
-        color: var(--text-primary);
-        align-items: center;
-        justify-content: center;
-        font-size: 14px;
-        cursor: pointer;
-        transition: var(--transition);
-    }
-    .mobile-icon-btn.danger {
-        color: #ff98bf;
-        border-color: rgba(233, 30, 99, 0.34);
-    }
-    .mobile-icon-btn.search {
-        color: #c9ffda;
-        border-color: rgba(29, 185, 84, 0.5);
-        background: rgba(29, 185, 84, 0.2);
-    }
-
-    .now-playing-section {
-        position: relative;
-        top: auto;
-        left: auto;
-        width: auto;
-        min-height: 0;
-        margin: 14px 16px 0;
-        padding: 18px;
-        border-radius: 18px;
-        border: 1px solid rgba(255,255,255,0.1);
-        background: linear-gradient(145deg, rgba(20, 20, 26, 0.96) 0%, rgba(12, 12, 16, 0.94) 100%);
-        box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
-        overflow: hidden;
-        transform: none;
-    }
-    .now-playing-bg,
-    .sound-waves,
-    .song-album {
-        display: none;
-    }
-    .now-playing-content {
-        max-width: none;
-        margin: 0;
-        gap: 16px;
-        align-items: flex-start;
-        text-align: left;
-    }
-    .album-artwork {
-        width: 116px;
-        height: 116px;
-        border-radius: 14px;
-    }
-    .yt-video-wrapper {
-        width: 116px;
-        border-radius: 14px;
-    }
-    .song-title {
-        font-size: 19px;
-        line-height: 1.3;
-        margin-bottom: 6px;
-        white-space: normal;
-    }
-    .song-artist {
-        font-size: 14px;
-        margin-bottom: 12px;
-    }
-    .progress-container {
-        gap: 10px;
-        margin-bottom: 12px;
-    }
-    .time-current,
-    .time-total {
-        min-width: 34px;
-        font-size: 11px;
-    }
-    .playback-controls {
-        justify-content: center;
-        gap: 14px;
-        margin-bottom: 12px;
-    }
-    .btn-control {
-        width: 44px;
-        height: 44px;
-        font-size: 18px;
-        background: rgba(255,255,255,0.06);
-    }
-    .btn-play {
-        width: 56px;
-        height: 56px;
-        font-size: 22px;
-    }
-
-    .mobile-search-shortcut {
-        display: none;
-    }
-    .mobile-queue-preview {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 6px;
-        padding: 10px 12px;
-        border-radius: 12px;
-        border: 1px solid rgba(255,255,255,0.08);
-        background: rgba(255,255,255,0.05);
-        color: var(--text-secondary);
-        font-size: 12px;
-    }
-    .host-indicator {
-        display: none;
-    }
-
-    .content-tabs {
-        position: static;
-        top: auto;
-        z-index: 1;
-        padding: 0 16px;
-        margin-top: 12px;
-        border-bottom: none;
-        gap: 8px;
-        overflow-x: auto;
-        scrollbar-width: none;
-    }
-    .content-tabs::-webkit-scrollbar {
-        display: none;
-    }
-    .tab-btn {
-        flex: 0 0 auto;
-        border: 1px solid rgba(255,255,255,0.12);
-        background: rgba(255,255,255,0.03);
-        border-radius: 999px;
-        padding: 10px 14px;
-        border-bottom-width: 1px;
-        font-size: 13px;
-    }
-    .tab-btn.active {
-        border-color: rgba(29, 185, 84, 0.55);
-        border-bottom-color: rgba(29, 185, 84, 0.55);
-        background: rgba(29, 185, 84, 0.2);
-        color: #e9fff1;
-    }
-    .mobile-only {
-        display: inline-flex;
-    }
-    .tab-content {
-        padding: 14px 16px 24px;
-    }
-
-    .room-main.mobile-search-split {
-        --mobile-room-available: calc(100dvh - var(--mobile-room-header-height, 72px) - env(safe-area-inset-bottom, 0px) - 12px);
-        overflow: hidden;
-    }
-    .room-main.mobile-search-split .now-playing-section {
-        min-height: calc(var(--mobile-room-available) * 0.5);
-        max-height: calc(var(--mobile-room-available) * 0.5);
-        overflow-y: auto;
-    }
-    .room-main.mobile-search-split .mobile-queue-preview {
-        display: none;
-    }
-    .room-main.mobile-search-split #search-panel.tab-content.active {
-        display: flex;
-        flex-direction: column;
-        min-height: calc(var(--mobile-room-available) * 0.3);
-        max-height: calc(var(--mobile-room-available) * 0.3);
-        overflow: hidden;
-        padding-bottom: 10px;
-    }
-    .room-main.mobile-search-split #search-panel .song-list {
-        flex: 1;
-        min-height: 0;
-        overflow-y: auto;
-    }
-    .room-main.mobile-search-split #chat-panel {
-        display: flex !important;
-        flex-direction: column;
-        min-height: calc(var(--mobile-room-available) * 0.2);
-        max-height: calc(var(--mobile-room-available) * 0.2);
-        overflow: hidden;
-        padding-top: 8px;
-        padding-bottom: 10px;
-    }
-    .room-main.mobile-search-split #chat-panel .section-title {
-        margin-bottom: 8px;
-    }
-    .room-main.mobile-search-split #chat-panel .chat-messages {
-        flex: 1;
-        min-height: 0;
-        max-height: none;
-    }
-    .room-main.mobile-search-split #chat-panel .chat-input-wrapper {
-        padding-top: 8px;
-    }
-
-    .queue-empty {
-        padding: 24px 14px;
-        border-radius: 14px;
-        border: 1px dashed rgba(255,255,255,0.2);
-        background: rgba(255,255,255,0.02);
-    }
-    .queue-empty i {
-        font-size: 34px;
-        margin-bottom: 10px;
-    }
-    .queue-empty h3 {
-        font-size: 17px;
-    }
-    .queue-empty p {
-        font-size: 13px;
-        margin-bottom: 14px;
-    }
-    .song-item {
-        gap: 10px;
-        padding: 10px;
-    }
-    .song-item-added {
-        display: none;
-    }
-    .song-item-duration {
-        margin-right: 4px;
-        font-size: 12px;
-    }
-    .song-item-action {
-        width: 30px;
-        height: 30px;
-        opacity: 1;
-    }
-
-    .library-search .input-wrapper {
-        min-height: 48px;
-        border-radius: 14px;
-    }
-    .search-go-btn {
-        width: 42px;
-        height: 42px;
-    }
-    .search-sources {
-        margin-top: 12px;
-        overflow-x: auto;
-        white-space: nowrap;
-        flex-wrap: nowrap;
-        gap: 8px;
-        padding-bottom: 4px;
-        scrollbar-width: none;
-    }
-    .search-sources::-webkit-scrollbar {
-        display: none;
-    }
-    .source-filter {
-        flex: 0 0 auto;
-    }
-    .search-empty {
-        padding: 20px 10px;
-    }
-    .search-suggestions {
-        justify-content: flex-start;
-    }
-
-    .mobile-chat-panel.active {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        min-height: calc(100vh - 360px);
-    }
-    .mobile-chat-panel .chat-messages {
-        min-height: 36vh;
-        max-height: calc(100vh - 360px);
-    }
-}
-
-@media (max-width: 768px) {
-    .mobile-room-header {
-        padding: calc(env(safe-area-inset-top, 0px) + 8px) 12px 10px;
-    }
-    .mobile-room-title-block h3 {
-        font-size: 16px;
-    }
-    .mobile-pill-btn {
-        height: 34px;
-        padding: 0 10px;
-        font-size: 12px;
-    }
-    .mobile-icon-btn {
-        width: 34px;
-        height: 34px;
-        font-size: 13px;
-    }
-    .mobile-icon-btn.search {
-        border-color: rgba(29, 185, 84, 0.45);
-    }
-    .now-playing-section {
-        margin: 12px 12px 0;
-        padding: 14px;
-        border-radius: 16px;
-    }
-    .now-playing-content {
-        flex-direction: column;
-        align-items: center;
-        text-align: center;
-        gap: 12px;
-    }
-    .album-artwork {
-        width: 160px;
-        height: 160px;
-    }
-    .yt-video-wrapper {
-        width: 160px;
-    }
-    .song-details {
-        width: 100%;
-        text-align: left;
-    }
-    .song-title {
-        font-size: 18px;
-    }
-    .song-artist {
-        font-size: 13px;
-        margin-bottom: 10px;
-    }
-    .progress-container {
-        gap: 8px;
-        margin-bottom: 10px;
-    }
-    .time-current,
-    .time-total {
-        min-width: 30px;
-    }
-    .playback-controls {
-        gap: 10px;
-        margin-bottom: 10px;
-    }
-    .btn-control {
-        width: 42px;
-        height: 42px;
-        font-size: 16px;
-    }
-    .btn-play {
-        width: 52px;
-        height: 52px;
-        font-size: 20px;
-    }
-    .content-tabs {
-        padding: 0 12px;
-    }
-    .tab-btn {
-        padding: 9px 12px;
-        font-size: 12px;
-    }
-    .tab-content {
-        padding: 12px 12px 20px;
-    }
-    .mobile-chat-panel.active {
-        min-height: calc(100vh - 320px);
-    }
-    .mobile-chat-panel .chat-messages {
-        min-height: 34vh;
-        max-height: calc(100vh - 340px);
-    }
-
-    .room-main.mobile-search-split {
-        --mobile-room-available: calc(100dvh - var(--mobile-room-header-height, 66px) - env(safe-area-inset-bottom, 0px) - 10px);
-    }
-    .room-main.mobile-search-split .now-playing-section {
-        margin: 10px 12px 0;
-        min-height: calc(var(--mobile-room-available) * 0.5);
-        max-height: calc(var(--mobile-room-available) * 0.5);
-    }
-    .room-main.mobile-search-split #search-panel.tab-content.active {
-        min-height: calc(var(--mobile-room-available) * 0.31);
-        max-height: calc(var(--mobile-room-available) * 0.31);
-    }
-    .room-main.mobile-search-split #chat-panel {
-        min-height: calc(var(--mobile-room-available) * 0.19);
-        max-height: calc(var(--mobile-room-available) * 0.19);
     }
 }

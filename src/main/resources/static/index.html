@@ -4,14 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MusicSync - Listen Together</title>
-    <link rel="stylesheet" href="/css/style.css?v=20260315-05">
-    <link rel="preconnect" href="https://www.youtube-nocookie.com">
-    <link rel="preconnect" href="https://www.youtube.com">
-    <link rel="preconnect" href="https://i.ytimg.com">
+    <link rel="stylesheet" href="/css/style.css?v=20260314-02">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
-    <script defer src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
 </head>
 <body>
 
@@ -256,31 +253,6 @@
 
             <!-- Main Content -->
             <main class="room-main">
-                <!-- Mobile Header -->
-                <div class="mobile-room-header">
-                    <div class="mobile-room-header-main">
-                        <div class="mobile-room-title-block">
-                            <p class="mobile-room-label">Listening Room</p>
-                            <h3 id="mobile-room-name">Music Room</h3>
-                        </div>
-                        <div class="mobile-room-header-actions">
-                            <button class="mobile-pill-btn" type="button" onclick="openListenersModal()" title="View listeners">
-                                <i class="fas fa-users"></i>
-                                <span id="mobile-listener-count">0</span>
-                            </button>
-                            <button class="mobile-icon-btn search" type="button" onclick="switchTab('search')" title="Search songs">
-                                <i class="fas fa-search"></i>
-                            </button>
-                            <button class="mobile-icon-btn" type="button" onclick="switchTab('chat')" title="Open chat">
-                                <i class="fas fa-comments"></i>
-                            </button>
-                            <button class="mobile-icon-btn danger" type="button" onclick="leaveRoom()" title="Leave room">
-                                <i class="fas fa-sign-out-alt"></i>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Now Playing -->
                 <div class="now-playing-section">
                     <div class="now-playing-bg" id="now-playing-bg"></div>
@@ -297,10 +269,7 @@
                             </div>
                             <!-- YouTube Video Player (shown when a ytv_ song is playing) -->
                             <div class="yt-video-wrapper hidden" id="yt-video-wrapper">
-                                <div class="yt-player-placeholder" id="yt-player-placeholder">
-                                    <i class="fab fa-youtube"></i>
-                                    <span>Video loads when this track starts</span>
-                                </div>
+                                <div id="yt-player"></div>
                             </div>
                             <div class="sound-waves" id="sound-waves">
                                 <span></span><span></span><span></span><span></span><span></span>
@@ -336,11 +305,6 @@
                                 </button>
                             </div>
 
-                            <div class="mobile-queue-preview" id="mobile-queue-preview">
-                                <i class="fas fa-list"></i>
-                                <span id="mobile-queue-preview-text">Queue is empty</span>
-                            </div>
-
                             <div class="host-indicator" id="host-indicator">
                                 <i class="fas fa-crown"></i>
                                 <span>Listeners can play/pause, add, and move songs. Only host can remove, skip, or seek.</span>
@@ -358,10 +322,6 @@
                     <button class="tab-btn" onclick="switchTab('search')" id="tab-search">
                         <i class="fas fa-globe"></i>
                         Search All
-                    </button>
-                    <button class="tab-btn mobile-only" onclick="switchTab('chat')" id="tab-chat">
-                        <i class="fas fa-comments"></i>
-                        Chat
                     </button>
                 </div>
 
@@ -427,22 +387,6 @@
                     </button>
                     <div class="song-list" id="search-results"></div>
                 </div>
-
-                <!-- Chat (Mobile) -->
-                <div class="tab-content mobile-chat-panel" id="chat-panel">
-                    <div class="section-title">
-                        <i class="fas fa-comments"></i>
-                        <span>Chat</span>
-                    </div>
-                    <div class="chat-messages" id="chat-messages-mobile"></div>
-                    <div class="chat-input-wrapper">
-                        <input type="text" id="chat-input-mobile" placeholder="Type a message..."
-                               maxlength="500" onkeypress="handleChatKeypress(event)">
-                        <button class="btn-icon" onclick="sendChat()">
-                            <i class="fas fa-paper-plane"></i>
-                        </button>
-                    </div>
-                </div>
             </main>
         </div>
     </div>
@@ -472,6 +416,6 @@
         <span>Connecting...</span>
     </div>
 
-    <script src="js/app.js?v=20260315-10"></script>
+    <script src="js/app.js?v=20260314-15"></script>
 </body>
 </html>
