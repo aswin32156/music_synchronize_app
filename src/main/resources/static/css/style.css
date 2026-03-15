@@ -1928,3 +1928,18 @@ body {
         opacity: 1;
     }
 }
+
+/* ===== Mobile: Full-width YouTube Video Player ===== */
+@media (max-width: 768px) {
+    .album-artwork-container {
+        width: 100%;
+    }
+    .yt-video-wrapper {
+        width: 100%;
+        border-radius: var(--radius-md);
+    }
+    /* Tighten horizontal padding in now-playing when video is showing */
+    .now-playing-section:has(#yt-video-wrapper:not(.hidden)) {
+        padding: 16px 8px 12px;
+    }
+}
