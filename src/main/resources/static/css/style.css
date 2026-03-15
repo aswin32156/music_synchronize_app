@@ -793,6 +793,7 @@ body {
     display: flex;
     flex-direction: column;
     height: 100vh;
+    min-height: 0;
     overflow-y: auto;
     background: var(--bg-primary);
 }
@@ -1391,28 +1392,50 @@ body {
 }
 
 /* Larger focused layout when YouTube video is active */
+.now-playing-section.yt-video-active {
+    flex-shrink: 0;
+    padding-top: 28px;
+    padding-bottom: 20px;
+}
 .now-playing-content.yt-video-mode {
     flex-direction: column;
     align-items: center;
     text-align: center;
-    gap: 22px;
+    gap: 16px;
     max-width: 920px;
 }
 .now-playing-content.yt-video-mode .album-artwork-container {
     width: min(100%, 780px);
 }
 .now-playing-content.yt-video-mode .yt-video-wrapper {
-    width: 100%;
+    width: min(100%, calc(min(46vh, 420px) * 16 / 9));
+    width: min(100%, calc(min(46dvh, 420px) * 16 / 9));
+    max-width: 100%;
+    margin: 0 auto;
 }
 .now-playing-content.yt-video-mode .song-details {
     width: min(100%, 860px);
 }
+.now-playing-content.yt-video-mode .song-album {
+    margin-bottom: 18px;
+}
+.now-playing-content.yt-video-mode .progress-container {
+    margin-bottom: 14px;
+}
 .now-playing-content.yt-video-mode .playback-controls {
     justify-content: center;
+    margin-bottom: 10px;
 }
 .now-playing-content.yt-video-mode .host-indicator {
     margin: 0 auto;
 }
+
+/* Keep room scrolling on one container while video mode is active. */
+.room-main.yt-video-mode .tab-content.active {
+    flex: 0 0 auto;
+    overflow: visible;
+}
+
 #filter-youtube.disabled:hover {
     opacity: 0.28;
 }

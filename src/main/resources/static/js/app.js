@@ -1149,6 +1149,8 @@ function showYtVideoPlayer() {
     if (wrapper) wrapper.classList.remove('hidden');
     const artwork = document.getElementById('album-artwork');
     if (artwork) artwork.classList.add('hidden');
+    const roomMain = document.querySelector('.room-main');
+    if (roomMain) roomMain.classList.add('yt-video-mode');
     const nowPlayingContent = document.querySelector('.now-playing-content');
     if (nowPlayingContent) nowPlayingContent.classList.add('yt-video-mode');
     const nowPlayingSection = document.querySelector('.now-playing-section');
@@ -1160,6 +1162,8 @@ function hideYtVideoPlayer() {
     if (wrapper) wrapper.classList.add('hidden');
     const artwork = document.getElementById('album-artwork');
     if (artwork) artwork.classList.remove('hidden');
+    const roomMain = document.querySelector('.room-main');
+    if (roomMain) roomMain.classList.remove('yt-video-mode');
     const nowPlayingContent = document.querySelector('.now-playing-content');
     if (nowPlayingContent) nowPlayingContent.classList.remove('yt-video-mode');
     const nowPlayingSection = document.querySelector('.now-playing-section');
