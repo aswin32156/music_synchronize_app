@@ -121,6 +121,34 @@ function getListenerCount(users) {
     return (Array.isArray(users) ? users : []).filter(user => !user.host).length;
 }
 
+function syncMobileRoomHeader(state = currentRoom) {
+    const roomTitle = document.getElementById('mobile-room-name');
+    if (roomTitle) {
+        roomTitle.textContent = state && state.roomName ? state.roomName : 'Music Room';
+    }
+
+    const listenerCount = document.getElementById('mobile-listener-count');
+    if (!listenerCount) return;
+
+    const users = (Array.isArray(currentUsers) && currentUsers.length > 0)
+        ? currentUsers
+        : (state && Array.isArray(state.users) ? state.users : []);
+    listenerCount.textContent = String(getListenerCount(users));
+}
+
+function updateMobileQueuePreview(queueLength) {
+    const preview = document.getElementById('mobile-queue-preview-text');
+    if (!preview) return;
+
+    const total = Number(queueLength);
+    if (!Number.isFinite(total) || total <= 0) {
+        preview.textContent = 'Queue is empty';
+        return;
+    }
+
+    preview.textContent = total === 1 ? '1 song in queue' : `${total} songs in queue`;
+}
+
 function buildUsersRenderSignature(users) {
     return (Array.isArray(users) ? users : [])
         .map(user => `${user.id || ''}:${user.username || ''}:${user.host ? 1 : 0}`)
@@ -526,6 +554,7 @@ function updateRoomUI(state) {
     // Room info
     document.getElementById('room-name-display').textContent = state.roomName || 'Music Room';
     document.getElementById('room-code-display').textContent = state.roomCode;
+    syncMobileRoomHeader(state);
 
     // Set current user ID (extract from users list)
     if (!currentUserId && currentUser) {
@@ -607,6 +636,7 @@ function updateUsersList(users) {
     if (countBadge) {
         countBadge.textContent = getListenerCount(currentUsers);
     }
+    syncMobileRoomHeader();
 
     if (currentRoom) {
         currentRoom.users = currentUsers;
@@ -892,6 +922,7 @@ function updateQueue(queue, playbackState) {
     const currentIdx = playbackState ? playbackState.currentSongIndex : -1;
 
     queueCount.textContent = queue.length;
+    updateMobileQueuePreview(queue.length);
 
     if (queue.length === 0) {
         queueEmpty.classList.remove('hidden');
@@ -2692,6 +2723,8 @@ function leaveRoom() {
     currentUserId = null;
     ytVideoFallbackMap.clear();
     currentUsers = [];
+    syncMobileRoomHeader({ roomName: 'Music Room', users: [] });
+    updateMobileQueuePreview(0);
     lastUsersRenderSignature = '';
     lastQueueRenderSignature = '';
     lastNowPlayingSignature = '';

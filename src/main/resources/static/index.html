@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MusicSync - Listen Together</title>
-    <link rel="stylesheet" href="/css/style.css?v=20260315-03">
+    <link rel="stylesheet" href="/css/style.css?v=20260315-04">
     <link rel="preconnect" href="https://www.youtube-nocookie.com">
     <link rel="preconnect" href="https://www.youtube.com">
     <link rel="preconnect" href="https://i.ytimg.com">
@@ -256,6 +256,28 @@
 
             <!-- Main Content -->
             <main class="room-main">
+                <!-- Mobile Header -->
+                <div class="mobile-room-header">
+                    <div class="mobile-room-header-main">
+                        <div class="mobile-room-title-block">
+                            <p class="mobile-room-label">Listening Room</p>
+                            <h3 id="mobile-room-name">Music Room</h3>
+                        </div>
+                        <div class="mobile-room-header-actions">
+                            <button class="mobile-pill-btn" type="button" onclick="openListenersModal()" title="View listeners">
+                                <i class="fas fa-users"></i>
+                                <span id="mobile-listener-count">0</span>
+                            </button>
+                            <button class="mobile-icon-btn" type="button" onclick="switchTab('chat')" title="Open chat">
+                                <i class="fas fa-comments"></i>
+                            </button>
+                            <button class="mobile-icon-btn danger" type="button" onclick="leaveRoom()" title="Leave room">
+                                <i class="fas fa-sign-out-alt"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Now Playing -->
                 <div class="now-playing-section">
                     <div class="now-playing-bg" id="now-playing-bg"></div>
@@ -284,10 +306,6 @@
                         </div>
 
                         <div class="song-details">
-                            <button class="mobile-player-drag-handle" id="mobile-player-drag-handle" type="button" aria-label="Move player controls">
-                                <i class="fas fa-grip-lines"></i>
-                                <span>Move</span>
-                            </button>
                             <h2 class="song-title" id="song-title">No Song Playing</h2>
                             <p class="song-artist" id="song-artist">Add songs to the queue to start listening</p>
                             <p class="song-album" id="song-album"></p>
@@ -313,6 +331,16 @@
                                 <button class="btn-control" onclick="nextSong()" title="Next">
                                     <i class="fas fa-step-forward"></i>
                                 </button>
+                            </div>
+
+                            <button class="mobile-search-shortcut" type="button" onclick="switchTab('search')">
+                                <i class="fas fa-search"></i>
+                                Search All Songs
+                            </button>
+
+                            <div class="mobile-queue-preview" id="mobile-queue-preview">
+                                <i class="fas fa-list"></i>
+                                <span id="mobile-queue-preview-text">Queue is empty</span>
                             </div>
 
                             <div class="host-indicator" id="host-indicator">
@@ -446,6 +474,6 @@
         <span>Connecting...</span>
     </div>
 
-    <script src="js/app.js?v=20260315-08"></script>
+    <script src="js/app.js?v=20260315-09"></script>
 </body>
 </html>
