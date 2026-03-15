@@ -1684,16 +1684,15 @@ function playSongAtIndex(index) {
         showToast('Only the host can choose the next song', 'info');
         return;
     }
+    if (!currentRoom || !Array.isArray(currentRoom.queue) || index < 0 || index >= currentRoom.queue.length) {
+        showToast('Unable to select that song right now. Try again.', 'error');
+        return;
+    }
+
     const selectedSong = currentRoom && Array.isArray(currentRoom.queue)
         ? currentRoom.queue[index]
         : null;
     const isSelectedVideo = !!(selectedSong && selectedSong.id && selectedSong.id.startsWith('ytv_'));
-
-    // If a song is currently playing, don't interrupt it
-    if (isPlaying && currentSongIndex >= 0 && !isSelectedVideo) {
-        showToast('Song will play when its turn comes in the queue', 'info');
-        return;
-    }
 
     if (isSelectedVideo) {
         stopAudioPlayback(true);
