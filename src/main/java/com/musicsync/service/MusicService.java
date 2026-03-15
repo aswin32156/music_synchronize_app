@@ -1,9 +1,13 @@
 package com.musicsync.service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 import org.springframework.stereotype.Service;
 
@@ -12,10 +16,26 @@ import com.musicsync.model.Song;
 @Service
 public class MusicService {
 
+    private static final int SEARCH_PROVIDER_LIMIT_CAP = 12;
+    private static final int SEARCH_JIO_TIMEOUT_MS = 2200;
+    private static final int SEARCH_YOUTUBE_TIMEOUT_MS = 4800;
+    private static final long SEARCH_CACHE_TTL_MS = 30_000;
+
     private final List<Song> library = new ArrayList<>();
     private final Map<String, Song> externalSongsCache = new ConcurrentHashMap<>();
+    private final Map<String, CachedExternalSearch> externalSearchCache = new ConcurrentHashMap<>();
     private final JioSaavnService jioSaavnService;
     private final YouTubeService youTubeService;
+
+    private static final class CachedExternalSearch {
+        private final long cachedAt;
+        private final List<Song> results;
+
+        private CachedExternalSearch(long cachedAt, List<Song> results) {
+            this.cachedAt = cachedAt;
+            this.results = results;
+        }
+    }
 
     public MusicService(JioSaavnService jioSaavnService, YouTubeService youTubeService) {
         this.jioSaavnService = jioSaavnService;
@@ -77,7 +97,15 @@ public class MusicService {
 
         // Check external songs cache
         Song cached = externalSongsCache.get(id);
-        if (cached != null) return cached;
+        if (cached != null) {
+            // Search can cache YouTube metadata quickly with unresolved audio.
+            // Resolve audio lazily when a song is actually requested for playback.
+            boolean unresolvedYouTubeAudio = id.startsWith("yt_")
+                    && (cached.getAudioUrl() == null || cached.getAudioUrl().isBlank());
+            if (!unresolvedYouTubeAudio) {
+                return cached;
+            }
+        }
 
         // Try to fetch from external APIs by ID
         if (id.startsWith("jio_")) {
@@ -87,6 +115,22 @@ public class MusicService {
                 return song;
             }
         } else if (id.startsWith("yt_")) {
+            if (cached != null
+                    && (cached.getAudioUrl() == null || cached.getAudioUrl().isBlank())
+                    && cached.getTitle() != null
+                    && !cached.getTitle().isBlank()) {
+                Song resolvedFromMetadata = youTubeService.resolveSongFromMetadata(
+                        id.substring(3),
+                        cached.getTitle(),
+                        cached.getArtist(),
+                        cached.getCoverUrl(),
+                        cached.getDurationSeconds());
+                if (resolvedFromMetadata != null) {
+                    externalSongsCache.put(resolvedFromMetadata.getId(), resolvedFromMetadata);
+                    return resolvedFromMetadata;
+                }
+            }
+
             Song song = youTubeService.getSongById(id.substring(3));
             if (song != null) {
                 externalSongsCache.put(song.getId(), song);
@@ -118,24 +162,76 @@ public class MusicService {
         List<Song> results = new ArrayList<>();
         if (query == null || query.isBlank()) return results;
 
-        // Search JioSaavn (always available)
-        List<Song> jioResults = jioSaavnService.searchSongs(query, limit);
-        results.addAll(jioResults);
+        int normalizedLimit = Math.max(1, Math.min(limit, 30));
+        int providerLimit = Math.max(6, Math.min(normalizedLimit, SEARCH_PROVIDER_LIMIT_CAP));
+        String normalizedQuery = query.trim();
+        String searchKey = normalizedQuery.toLowerCase() + "#" + providerLimit;
 
-        // Search YouTube Music metadata (API key or web fallback)
-        List<Song> ytResults = youTubeService.searchSongs(query, limit);
-        results.addAll(ytResults);
+        CachedExternalSearch cachedSearch = externalSearchCache.get(searchKey);
+        long now = System.currentTimeMillis();
+        if (cachedSearch != null && (now - cachedSearch.cachedAt) <= SEARCH_CACHE_TTL_MS) {
+            return new ArrayList<>(cachedSearch.results);
+        }
 
-        // Search YouTube Videos (playable via IFrame embed)
-        List<Song> ytvResults = youTubeService.searchVideoContent(query, limit);
-        results.addAll(ytvResults);
+        CompletableFuture<List<Song>> jioFuture = CompletableFuture
+                .supplyAsync(() -> jioSaavnService.searchSongs(normalizedQuery, providerLimit))
+            .completeOnTimeout(List.of(), SEARCH_JIO_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .exceptionally(e -> List.of());
 
-        // Cache all results so they can be retrieved by ID when adding to queue
+        CompletableFuture<List<Song>> ytMusicFuture = CompletableFuture
+                .supplyAsync(() -> youTubeService.searchSongs(normalizedQuery, providerLimit))
+            .completeOnTimeout(List.of(), SEARCH_YOUTUBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .exceptionally(e -> List.of());
+
+        CompletableFuture<List<Song>> ytVideoFuture = CompletableFuture
+                .supplyAsync(() -> youTubeService.searchVideoContent(normalizedQuery, providerLimit))
+            .completeOnTimeout(List.of(), SEARCH_YOUTUBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .exceptionally(e -> List.of());
+
+        List<Song> jioResults = safeJoin(jioFuture);
+        List<Song> ytResults = safeJoin(ytMusicFuture);
+        List<Song> ytvResults = safeJoin(ytVideoFuture);
+
+        Set<String> seenIds = new LinkedHashSet<>();
+        appendUnique(results, jioResults, seenIds);
+        appendUnique(results, ytResults, seenIds);
+        appendUnique(results, ytvResults, seenIds);
+
+        // Cache results so queue add can resolve by ID later.
         for (Song song : results) {
+            if (song == null || song.getId() == null) continue;
+
             externalSongsCache.put(song.getId(), song);
         }
 
+        boolean hasAnyYouTubeResult = !ytResults.isEmpty() || !ytvResults.isEmpty();
+        if (hasAnyYouTubeResult) {
+            externalSearchCache.put(searchKey, new CachedExternalSearch(now, new ArrayList<>(results)));
+        } else {
+            // Do not cache degraded jio-only snapshots; allow a new attempt on the next search.
+            externalSearchCache.remove(searchKey);
+        }
+
         return results;
+    }
+
+    private List<Song> safeJoin(CompletableFuture<List<Song>> future) {
+        try {
+            return future.join();
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    private void appendUnique(List<Song> target, List<Song> source, Set<String> seenIds) {
+        if (source == null || source.isEmpty()) return;
+
+        for (Song song : source) {
+            if (song == null || song.getId() == null || song.getId().isBlank()) continue;
+            if (seenIds.add(song.getId())) {
+                target.add(song);
+            }
+        }
     }
 
     public Map<String, Object> getAvailableSources() {

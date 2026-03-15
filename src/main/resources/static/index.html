@@ -4,11 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MusicSync - Listen Together</title>
-    <link rel="stylesheet" href="/css/style.css?v=20260314-02">
+    <link rel="stylesheet" href="/css/style.css?v=20260315-03">
+    <link rel="preconnect" href="https://www.youtube-nocookie.com">
+    <link rel="preconnect" href="https://www.youtube.com">
+    <link rel="preconnect" href="https://i.ytimg.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
 </head>
 <body>
 
@@ -269,7 +272,10 @@
                             </div>
                             <!-- YouTube Video Player (shown when a ytv_ song is playing) -->
                             <div class="yt-video-wrapper hidden" id="yt-video-wrapper">
-                                <div id="yt-player"></div>
+                                <div class="yt-player-placeholder" id="yt-player-placeholder">
+                                    <i class="fab fa-youtube"></i>
+                                    <span>Video loads when this track starts</span>
+                                </div>
                             </div>
                             <div class="sound-waves" id="sound-waves">
                                 <span></span><span></span><span></span><span></span><span></span>
@@ -278,6 +284,10 @@
                         </div>
 
                         <div class="song-details">
+                            <button class="mobile-player-drag-handle" id="mobile-player-drag-handle" type="button" aria-label="Move player controls">
+                                <i class="fas fa-grip-lines"></i>
+                                <span>Move</span>
+                            </button>
                             <h2 class="song-title" id="song-title">No Song Playing</h2>
                             <p class="song-artist" id="song-artist">Add songs to the queue to start listening</p>
                             <p class="song-album" id="song-album"></p>
@@ -322,6 +332,10 @@
                     <button class="tab-btn" onclick="switchTab('search')" id="tab-search">
                         <i class="fas fa-globe"></i>
                         Search All
+                    </button>
+                    <button class="tab-btn mobile-only" onclick="switchTab('chat')" id="tab-chat">
+                        <i class="fas fa-comments"></i>
+                        Chat
                     </button>
                 </div>
 
@@ -387,6 +401,22 @@
                     </button>
                     <div class="song-list" id="search-results"></div>
                 </div>
+
+                <!-- Chat (Mobile) -->
+                <div class="tab-content mobile-chat-panel" id="chat-panel">
+                    <div class="section-title">
+                        <i class="fas fa-comments"></i>
+                        <span>Chat</span>
+                    </div>
+                    <div class="chat-messages" id="chat-messages-mobile"></div>
+                    <div class="chat-input-wrapper">
+                        <input type="text" id="chat-input-mobile" placeholder="Type a message..."
+                               maxlength="500" onkeypress="handleChatKeypress(event)">
+                        <button class="btn-icon" onclick="sendChat()">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
             </main>
         </div>
     </div>
@@ -416,6 +446,6 @@
         <span>Connecting...</span>
     </div>
 
-    <script src="js/app.js?v=20260314-15"></script>
+    <script src="js/app.js?v=20260315-08"></script>
 </body>
 </html>

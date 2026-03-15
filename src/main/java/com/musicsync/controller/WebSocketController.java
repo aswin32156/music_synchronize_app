@@ -8,6 +8,7 @@ import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Controller;
 
 import com.musicsync.dto.ChatRequest;
@@ -286,6 +287,8 @@ public class WebSocketController {
         if (room == null) return;
 
         String sessionId = headerAccessor.getSessionId();
+        if (sessionId == null || sessionId.isBlank()) return;
+
         RoomState state = roomService.getRoomState(roomCode);
         if (state != null) {
             PlaybackState ps = state.getPlaybackState();
@@ -297,6 +300,46 @@ public class WebSocketController {
         }
     }
 
+    @Scheduled(fixedRate = 1000)
+    public void broadcastActivePlaybackSyncTicks() {
+        for (Room room : roomService.getAllRoomsSnapshot()) {
+            if (room == null) continue;
+
+            PlaybackState state = room.getPlaybackState();
+            Song currentSong = room.getCurrentSong();
+            if (state == null || currentSong == null || !state.isPlaying()) {
+                continue;
+            }
+
+            double estimatedTime = state.getEstimatedCurrentTime();
+            int songDuration = currentSong.getDurationSeconds();
+
+            if (songDuration > 0 && estimatedTime >= songDuration) {
+                advanceToNextSong(room);
+                continue;
+            }
+
+            broadcastPlaybackState(room.getRoomCode(), true);
+        }
+    }
+
+    private void advanceToNextSong(Room room) {
+        PlaybackState state = room.getPlaybackState();
+        int nextIndex = state.getCurrentSongIndex() + 1;
+
+        if (nextIndex < room.getQueue().size()) {
+            state.setCurrentSongIndex(nextIndex);
+            state.setCurrentTime(0);
+            state.setPlaying(true);
+        } else {
+            state.setPlaying(false);
+            state.setCurrentTime(0);
+        }
+
+        broadcastRoomState(room.getRoomCode());
+        broadcastPlaybackState(room.getRoomCode(), false);
+    }
+
     private void broadcastRoomState(String roomCode) {
         RoomState state = roomService.getRoomState(roomCode);
         if (state != null) {
@@ -305,6 +348,10 @@ public class WebSocketController {
     }
 
     private void broadcastPlaybackState(String roomCode) {
+        broadcastPlaybackState(roomCode, false);
+    }
+
+    private void broadcastPlaybackState(String roomCode, boolean syncTick) {
         Room room = roomService.getRoom(roomCode);
         if (room == null) return;
 
@@ -315,11 +362,12 @@ public class WebSocketController {
         psCopy.setLastUpdated(ps.getLastUpdated());
         psCopy.setCurrentSongIndex(ps.getCurrentSongIndex());
 
-        Map<String, Object> playbackUpdate = Map.of(
-            "playbackState", psCopy,
-            "currentSong", room.getCurrentSong() != null ? room.getCurrentSong() : Map.of(),
-            "queueSize", room.getQueue().size()
-        );
+        Map<String, Object> playbackUpdate = new java.util.HashMap<>();
+        playbackUpdate.put("playbackState", psCopy);
+        playbackUpdate.put("currentSong", room.getCurrentSong() != null ? room.getCurrentSong() : Map.of());
+        playbackUpdate.put("queueSize", room.getQueue().size());
+        playbackUpdate.put("syncTick", syncTick);
+        playbackUpdate.put("serverTimeMs", System.currentTimeMillis());
         messagingTemplate.convertAndSend("/topic/room/" + roomCode + "/playback", playbackUpdate);
     }
 

@@ -77,7 +77,7 @@ public class RoomController {
     }
 
     @GetMapping("/rooms/{roomCode}")
-    public ResponseEntity<?> getRoomState(@PathVariable String roomCode) {
+    public ResponseEntity<?> getRoomState(@PathVariable("roomCode") String roomCode) {
         RoomState state = roomService.getRoomState(roomCode.toUpperCase());
         if (state == null) {
             return ResponseEntity.status(404).body(Map.of("error", "Room not found"));
@@ -86,7 +86,7 @@ public class RoomController {
     }
 
     @GetMapping("/rooms/{roomCode}/exists")
-    public ResponseEntity<?> checkRoom(@PathVariable String roomCode) {
+    public ResponseEntity<?> checkRoom(@PathVariable("roomCode") String roomCode) {
         boolean exists = roomService.roomExists(roomCode.toUpperCase());
         return ResponseEntity.ok(Map.of("exists", exists));
     }
@@ -97,14 +97,28 @@ public class RoomController {
     }
 
     @GetMapping("/music/search")
-    public ResponseEntity<List<Song>> searchSongs(@RequestParam(defaultValue = "") String q) {
+    public ResponseEntity<List<Song>> searchSongs(@RequestParam(name = "q", defaultValue = "") String q) {
         return ResponseEntity.ok(musicService.searchSongs(q));
+    }
+
+    @GetMapping("/music/song/{songId}")
+    public ResponseEntity<?> getSongById(@PathVariable("songId") String songId) {
+        if (songId == null || songId.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Song ID is required"));
+        }
+
+        Song song = musicService.getSongById(songId.trim());
+        if (song == null) {
+            return ResponseEntity.status(404).body(Map.of("error", "Song not found or unavailable"));
+        }
+
+        return ResponseEntity.ok(song);
     }
 
     @GetMapping("/music/search/external")
     public ResponseEntity<List<Song>> searchExternal(
-            @RequestParam(defaultValue = "") String q,
-            @RequestParam(defaultValue = "20") int limit) {
+            @RequestParam(name = "q", defaultValue = "") String q,
+            @RequestParam(name = "limit", defaultValue = "20") int limit) {
         if (q.isBlank()) {
             return ResponseEntity.ok(List.of());
         }

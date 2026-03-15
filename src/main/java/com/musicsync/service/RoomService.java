@@ -2,6 +2,7 @@ package com.musicsync.service;
 
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -167,6 +168,10 @@ public class RoomService {
 
     public int getActiveRoomCount() {
         return rooms.size();
+    }
+
+    public List<Room> getAllRoomsSnapshot() {
+        return new ArrayList<>(rooms.values());
     }
 
     private String generateRoomCode() {

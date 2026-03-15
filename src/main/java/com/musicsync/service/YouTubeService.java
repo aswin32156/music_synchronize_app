@@ -13,6 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -38,7 +39,10 @@ public class YouTubeService {
     private final Map<String, String> fallbackAudioCache = new ConcurrentHashMap<>();
 
     public YouTubeService(JioSaavnService jioSaavnService) {
-        this.restTemplate = new RestTemplate();
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(1500);
+        requestFactory.setReadTimeout(5200);
+        this.restTemplate = new RestTemplate(requestFactory);
         this.jioSaavnService = jioSaavnService;
     }
 
@@ -174,6 +178,32 @@ public class YouTubeService {
         return getSongByIdFromOEmbed(videoId);
     }
 
+    public Song resolveSongFromMetadata(String videoId,
+                                        String title,
+                                        String artist,
+                                        String coverUrl,
+                                        int durationSeconds) {
+        if (videoId == null || videoId.isBlank()) return null;
+        if (title == null || title.isBlank()) return null;
+
+        String normalizedArtist = (artist == null || artist.isBlank()) ? "Unknown Artist" : artist;
+        String normalizedCoverUrl = coverUrl == null ? "" : coverUrl;
+        int normalizedDuration = Math.max(0, durationSeconds);
+
+        String audioUrl = resolveFallbackAudio(videoId, title, normalizedArtist);
+        if (audioUrl == null || audioUrl.isBlank()) {
+            return null;
+        }
+
+        return new Song("yt_" + videoId,
+                title,
+                normalizedArtist,
+                "YouTube Music",
+                normalizedCoverUrl,
+                normalizedDuration,
+                audioUrl);
+    }
+
     private Song getSongByIdFromOEmbed(String videoId) {
         try {
             String watchUrl = "https://www.youtube.com/watch?v=" + videoId;
@@ -218,8 +248,7 @@ public class YouTubeService {
         if (artist == null || artist.isEmpty()) artist = "Unknown Artist";
 
         String coverUrl = getThumbnailUrl(snippet);
-        String audioUrl = resolveFallbackAudio(videoId, title, artist);
-        if (audioUrl == null || audioUrl.isEmpty()) return null;
+        String audioUrl = fallbackAudioCache.getOrDefault(videoId, "");
 
         return new Song("yt_" + videoId, title, artist, "YouTube Music", coverUrl, 0, audioUrl);
     }
@@ -241,8 +270,7 @@ public class YouTubeService {
 
         int duration = parseDurationLabel(getTextField(renderer.get("lengthText")));
         String coverUrl = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
-        String audioUrl = resolveFallbackAudio(videoId, title, artist);
-        if (audioUrl == null || audioUrl.isBlank()) return null;
+        String audioUrl = fallbackAudioCache.getOrDefault(videoId, "");
 
         return new Song("yt_" + videoId, title, artist, "YouTube Music", coverUrl, duration, audioUrl);
     }
@@ -407,19 +435,60 @@ public class YouTubeService {
         }
 
         try {
-            String query = (title == null ? "" : title.trim()) + " " + (artist == null ? "" : artist.trim());
-            if (query.isBlank()) {
+            String rawTitle = title == null ? "" : title.trim();
+            String rawArtist = artist == null ? "" : artist.trim();
+            String cleanedTitle = cleanTitleForFallback(rawTitle);
+
+            Set<String> queries = new LinkedHashSet<>();
+            if (!rawTitle.isBlank() || !rawArtist.isBlank()) {
+                queries.add((rawTitle + " " + rawArtist).trim());
+            }
+            if (!cleanedTitle.isBlank() && !rawArtist.isBlank()) {
+                queries.add((cleanedTitle + " " + rawArtist).trim());
+            }
+            if (!cleanedTitle.isBlank()) {
+                queries.add(cleanedTitle);
+                String shortTitle = firstWords(cleanedTitle, 5);
+                if (!shortTitle.isBlank()) {
+                    queries.add(shortTitle);
+                }
+            }
+
+            if (queries.isEmpty()) {
                 fallbackAudioCache.put(videoId, "");
                 return "";
             }
 
-            List<Song> candidates = jioSaavnService.searchSongs(query, 1);
-            if (!candidates.isEmpty()) {
-                String fallbackUrl = candidates.get(0).getAudioUrl();
-                if (fallbackUrl != null && !fallbackUrl.isBlank()) {
-                    fallbackAudioCache.put(videoId, fallbackUrl);
-                    return fallbackUrl;
+            String titleNorm = normalizeForMatch(cleanedTitle.isBlank() ? rawTitle : cleanedTitle);
+            String artistNorm = normalizeForMatch(rawArtist);
+
+            Song bestCandidate = null;
+            int bestScore = Integer.MIN_VALUE;
+
+            for (String query : queries) {
+                if (query == null || query.isBlank()) continue;
+
+                List<Song> candidates = jioSaavnService.searchSongs(query, 6);
+                for (Song candidate : candidates) {
+                    if (candidate == null) continue;
+
+                    String candidateAudio = candidate.getAudioUrl();
+                    if (candidateAudio == null || candidateAudio.isBlank()) {
+                        continue;
+                    }
+
+                    int score = computeFallbackScore(candidate, titleNorm, artistNorm);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestCandidate = candidate;
+                    }
                 }
+            }
+
+            if (bestCandidate != null && bestCandidate.getAudioUrl() != null && !bestCandidate.getAudioUrl().isBlank()) {
+                String fallbackUrl = bestCandidate.getAudioUrl();
+                fallbackAudioCache.put(videoId, fallbackUrl);
+                return fallbackUrl;
             }
         } catch (Exception e) {
             log.debug("YouTube fallback audio lookup failed for '{}': {}", videoId, e.getMessage());
@@ -427,6 +496,96 @@ public class YouTubeService {
 
         fallbackAudioCache.put(videoId, "");
         return "";
+    }
+
+    private String cleanTitleForFallback(String title) {
+        if (title == null || title.isBlank()) return "";
+
+        String cleaned = title;
+        cleaned = cleaned.replaceAll("(?i)\\(.*?\\)|\\[.*?\\]", " ");
+        cleaned = cleaned.replaceAll("(?i)official\\s+(music\\s+video|video|audio|lyric\\s+video|lyrics)", " ");
+        cleaned = cleaned.replaceAll("(?i)lyrics?|full\\s*song|audio|video|hd|4k|remaster(ed)?", " ");
+        cleaned = cleaned.replaceAll("(?i)\\bfeat\\.?\\b|\\bft\\.?\\b", " ");
+        cleaned = cleaned.replaceAll("[^A-Za-z0-9\\s]", " ");
+        cleaned = cleaned.replaceAll("\\s+", " ").trim();
+        return cleaned;
+    }
+
+    private String firstWords(String text, int maxWords) {
+        if (text == null || text.isBlank() || maxWords <= 0) return "";
+
+        String[] words = text.trim().split("\\s+");
+        if (words.length <= maxWords) return text.trim();
+
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < maxWords; i++) {
+            if (i > 0) builder.append(' ');
+            builder.append(words[i]);
+        }
+        return builder.toString();
+    }
+
+    private String normalizeForMatch(String value) {
+        if (value == null || value.isBlank()) return "";
+        return value.toLowerCase()
+                .replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private int computeFallbackScore(Song candidate, String titleNorm, String artistNorm) {
+        String candidateTitle = normalizeForMatch(candidate.getTitle());
+        String candidateArtist = normalizeForMatch(candidate.getArtist());
+
+        int score = 0;
+
+        if (!titleNorm.isBlank() && !candidateTitle.isBlank()) {
+            if (candidateTitle.equals(titleNorm)) {
+                score += 80;
+            } else if (candidateTitle.contains(titleNorm) || titleNorm.contains(candidateTitle)) {
+                score += 55;
+            }
+
+            score += Math.min(sharedWordCount(titleNorm, candidateTitle) * 8, 32);
+        }
+
+        if (!artistNorm.isBlank() && !candidateArtist.isBlank()) {
+            if (candidateArtist.contains(artistNorm) || artistNorm.contains(candidateArtist)) {
+                score += 22;
+            }
+
+            score += Math.min(sharedWordCount(artistNorm, candidateArtist) * 6, 18);
+        }
+
+        int duration = candidate.getDurationSeconds();
+        if (duration > 30) {
+            score += 4;
+        }
+
+        return score;
+    }
+
+    private int sharedWordCount(String left, String right) {
+        if (left == null || right == null || left.isBlank() || right.isBlank()) {
+            return 0;
+        }
+
+        Set<String> leftWords = new LinkedHashSet<>(List.of(left.split("\\s+")));
+        Set<String> rightWords = new LinkedHashSet<>(List.of(right.split("\\s+")));
+        leftWords.removeIf(word -> word.length() <= 1);
+        rightWords.removeIf(word -> word.length() <= 1);
+
+        if (leftWords.isEmpty() || rightWords.isEmpty()) {
+            return 0;
+        }
+
+        int count = 0;
+        for (String word : leftWords) {
+            if (rightWords.contains(word)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private int parseDurationSeconds(String isoDuration) {
