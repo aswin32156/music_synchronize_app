@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MusicSync - Listen Together</title>
-    <link rel="stylesheet" href="/css/style.css?v=20260315-04">
+    <link rel="stylesheet" href="/css/style.css?v=20260315-05">
     <link rel="preconnect" href="https://www.youtube-nocookie.com">
     <link rel="preconnect" href="https://www.youtube.com">
     <link rel="preconnect" href="https://i.ytimg.com">
@@ -268,6 +268,9 @@
                                 <i class="fas fa-users"></i>
                                 <span id="mobile-listener-count">0</span>
                             </button>
+                            <button class="mobile-icon-btn search" type="button" onclick="switchTab('search')" title="Search songs">
+                                <i class="fas fa-search"></i>
+                            </button>
                             <button class="mobile-icon-btn" type="button" onclick="switchTab('chat')" title="Open chat">
                                 <i class="fas fa-comments"></i>
                             </button>
@@ -332,11 +335,6 @@
                                     <i class="fas fa-step-forward"></i>
                                 </button>
                             </div>
-
-                            <button class="mobile-search-shortcut" type="button" onclick="switchTab('search')">
-                                <i class="fas fa-search"></i>
-                                Search All Songs
-                            </button>
 
                             <div class="mobile-queue-preview" id="mobile-queue-preview">
                                 <i class="fas fa-list"></i>
@@ -474,6 +472,6 @@
         <span>Connecting...</span>
     </div>
 
-    <script src="js/app.js?v=20260315-09"></script>
+    <script src="js/app.js?v=20260315-10"></script>
 </body>
 </html>

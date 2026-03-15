@@ -22,6 +22,7 @@ window.showScreen = function(screenId, pushHistory = true) {
             screen.classList.add('active');
             if (screenId === 'room-screen') {
                 syncMobilePlayerPosition(true);
+                syncMobileSplitLayout();
             }
             console.log('Screen activated:', screenId);
         } else {
@@ -2548,6 +2549,10 @@ function isMobileViewport() {
     return window.matchMedia('(max-width: 768px)').matches;
 }
 
+function isCompactRoomViewport() {
+    return window.matchMedia('(max-width: 1024px)').matches;
+}
+
 function syncMobilePlayerPosition(reset = false) {
     const player = document.querySelector('.now-playing-section');
     if (!player) return;
@@ -2639,9 +2644,38 @@ function initMobilePlayerDrag() {
 
     window.addEventListener('resize', () => {
         syncMobilePlayerPosition(false);
+        syncMobileSplitLayout();
     });
 
     syncMobilePlayerPosition(true);
+}
+
+function syncMobileSplitLayout(activeTab = null) {
+    const roomMain = document.querySelector('.room-main');
+    if (!roomMain) return;
+
+    const mobileHeader = roomMain.querySelector('.mobile-room-header');
+    if (mobileHeader) {
+        roomMain.style.setProperty('--mobile-room-header-height', `${Math.ceil(mobileHeader.getBoundingClientRect().height)}px`);
+    }
+
+    const activeBtn = document.querySelector('.tab-btn.active');
+    const currentTab = activeTab || (activeBtn ? activeBtn.id.replace('tab-', '') : 'queue');
+    const shouldSplit = isCompactRoomViewport() && currentTab === 'search';
+    roomMain.classList.toggle('mobile-search-split', shouldSplit);
+
+    const chatPanel = document.getElementById('chat-panel');
+    if (!chatPanel) return;
+
+    if (shouldSplit) {
+        chatPanel.classList.add('active');
+        return;
+    }
+
+    const chatTab = document.getElementById('tab-chat');
+    if (!chatTab || !chatTab.classList.contains('active')) {
+        chatPanel.classList.remove('active');
+    }
 }
 
 // ===== UI Helpers =====
@@ -2659,6 +2693,7 @@ function switchTab(tabName, pushHistory = true) {
     document.querySelectorAll('.tab-content').forEach(p => p.classList.remove('active'));
     document.getElementById('tab-' + tabName).classList.add('active');
     document.getElementById(tabName + '-panel').classList.add('active');
+    syncMobileSplitLayout(tabName);
     _updateSearchBackBtn();
 }
 
@@ -2725,6 +2760,10 @@ function leaveRoom() {
     currentUsers = [];
     syncMobileRoomHeader({ roomName: 'Music Room', users: [] });
     updateMobileQueuePreview(0);
+    const roomMain = document.querySelector('.room-main');
+    if (roomMain) {
+        roomMain.classList.remove('mobile-search-split');
+    }
     lastUsersRenderSignature = '';
     lastQueueRenderSignature = '';
     lastNowPlayingSignature = '';
@@ -2815,6 +2854,7 @@ console.log('All functions exposed to window object');
 // Enter key handlers for forms
 document.addEventListener('DOMContentLoaded', () => {
     initMobilePlayerDrag();
+    syncMobileSplitLayout();
     const createUsername = document.getElementById('create-username');
     const createRoomName = document.getElementById('create-room-name');
     const joinUsername = document.getElementById('join-username');
