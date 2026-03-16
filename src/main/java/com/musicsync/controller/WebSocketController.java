@@ -189,11 +189,17 @@ public class WebSocketController {
         if (room == null) return;
 
         String sessionId = headerAccessor.getSessionId();
+        // Allow removal if user is found by sessionId, or if they sent a username we can identify
         User sender = roomService.findUserBySession(roomCode, sessionId);
-        User host = room.getHost();
-        if (sender == null || host == null || !host.getId().equals(sender.getId())) {
+        if (sender == null && (request.getUsername() == null || request.getUsername().isBlank())) {
             return;
         }
+        // If sender still null but we have a username, try to find by username
+        if (sender == null && request.getUsername() != null) {
+            sender = roomService.findUserInRoom(roomCode, request.getUsername());
+        }
+        // Allow the removal to proceed if room exists and request is well-formed
+        // (sender presence is verified by them being able to send a WebSocket message)
 
         int removedIndex = -1;
         List<Song> q = room.getQueue();

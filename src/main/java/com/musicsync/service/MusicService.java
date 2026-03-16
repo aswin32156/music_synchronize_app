@@ -233,6 +233,10 @@ public class MusicService {
         List<Song> ytResults = safeJoin(ytMusicFuture);
         List<Song> ytvResults = safeJoin(ytVideoFuture);
 
+        if (ytvResults.isEmpty() && !ytResults.isEmpty()) {
+            ytvResults = synthesizeVideoResultsFromYouTubeMusic(ytResults, providerLimit);
+        }
+
         Set<String> seenIds = new LinkedHashSet<>();
         appendUnique(results, jioResults, seenIds);
         appendUnique(results, ytResults, seenIds);
@@ -273,6 +277,40 @@ public class MusicService {
                 target.add(song);
             }
         }
+    }
+
+    private List<Song> synthesizeVideoResultsFromYouTubeMusic(List<Song> ytResults, int limit) {
+        List<Song> synthesized = new ArrayList<>();
+        if (ytResults == null || ytResults.isEmpty()) return synthesized;
+
+        int max = Math.max(1, Math.min(limit, ytResults.size()));
+        for (Song song : ytResults) {
+            if (song == null || song.getId() == null || !song.getId().startsWith("yt_")) continue;
+
+            String videoId = song.getId().substring(3);
+            if (videoId.isBlank()) continue;
+
+            String title = (song.getTitle() == null || song.getTitle().isBlank()) ? "YouTube Video" : song.getTitle();
+            String artist = (song.getArtist() == null || song.getArtist().isBlank()) ? "YouTube" : song.getArtist();
+            String coverUrl = (song.getCoverUrl() == null || song.getCoverUrl().isBlank())
+                    ? "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg"
+                    : song.getCoverUrl();
+
+            synthesized.add(new Song(
+                    "ytv_" + videoId,
+                    title,
+                    artist,
+                    "YouTube Video",
+                    coverUrl,
+                    Math.max(0, song.getDurationSeconds()),
+                    ""));
+
+            if (synthesized.size() >= max) {
+                break;
+            }
+        }
+
+        return synthesized;
     }
 
     public Map<String, Object> getAvailableSources() {
