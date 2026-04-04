@@ -776,11 +776,9 @@ function updateQueue(queue, playbackState) {
             </div>
             ${song.addedBy ? `<span class="song-item-added">Added by ${escapeHtml(song.addedBy)}</span>` : ''}
             <span class="song-item-duration">${formatTime(song.durationSeconds)}</span>
-            ${isHost ? `
             <button class="song-item-action remove" type="button" draggable="false" aria-label="Remove ${escapeAttr(song.title)} from queue" title="Remove from queue">
                 <i class="fas fa-times"></i>
             </button>
-            ` : ''}
         </div>
     `).join('');
 
@@ -869,11 +867,6 @@ function reorderQueue(fromIndex, toIndex) {
 }
 
 function removeFromQueue(songId) {
-    if (!isHost) {
-        showToast('Only the host can remove songs from queue', 'info');
-        return;
-    }
-
     if (!songId) {
         showToast('Unable to remove this song right now. Try refreshing room state.', 'error');
         return;
@@ -902,6 +895,165 @@ const YT_QUALITY_STEPS = ['large', 'medium', 'small'];
 let ytQualityStepIndex = 1; // default to medium for smoother playback
 let ytRecentBufferEvents = [];
 let ytLastQualityChangeAt = 0;
+let ytControlsHideTimeout = null;
+let ytControlsBehaviorBound = false;
+
+function clearYtControlsHideTimeout() {
+    if (ytControlsHideTimeout) {
+        clearTimeout(ytControlsHideTimeout);
+        ytControlsHideTimeout = null;
+    }
+}
+
+function setYtControlsVisible(visible) {
+    const wrapper = document.getElementById('yt-video-wrapper');
+    if (!wrapper) return;
+    wrapper.classList.toggle('yt-controls-visible', !!visible);
+}
+
+function isTouchPrimaryInput() {
+    return !!(window.matchMedia && window.matchMedia('(hover: none), (pointer: coarse)').matches);
+}
+
+function scheduleYtControlsHide(delayMs = 1400) {
+    if (isTouchPrimaryInput()) return;
+    clearYtControlsHideTimeout();
+    ytControlsHideTimeout = window.setTimeout(() => {
+        setYtControlsVisible(false);
+    }, delayMs);
+}
+
+function showYtControlsTemporarily(delayMs = 1400) {
+    setYtControlsVisible(true);
+    scheduleYtControlsHide(delayMs);
+}
+
+function ensureYtControlsBehavior() {
+    const wrapper = document.getElementById('yt-video-wrapper');
+    if (!wrapper || ytControlsBehaviorBound) return;
+
+    const revealControls = () => {
+        showYtControlsTemporarily();
+    };
+
+    wrapper.addEventListener('mouseenter', revealControls);
+    wrapper.addEventListener('mousemove', revealControls);
+    wrapper.addEventListener('mouseleave', () => {
+        clearYtControlsHideTimeout();
+        setYtControlsVisible(false);
+    });
+    wrapper.addEventListener('touchstart', () => {
+        showYtControlsTemporarily(2800);
+    }, { passive: true });
+
+    ytControlsBehaviorBound = true;
+}
+
+window.toggleYtFullscreen = function() {
+    const wrapper = document.getElementById('yt-video-wrapper');
+    if (!wrapper || wrapper.classList.contains('hidden')) return;
+
+    showYtControlsTemporarily();
+
+    const isCurrentlyFullscreen = !!(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.msFullscreenElement
+    );
+
+    if (isCurrentlyFullscreen) {
+        const exitFullscreen = document.exitFullscreen
+            || document.webkitExitFullscreen
+            || document.msExitFullscreen;
+        
+        if (typeof exitFullscreen === 'function') {
+            exitFullscreen.call(document);
+        }
+    } else {
+        const requestFullscreen = wrapper.requestFullscreen
+            || wrapper.webkitRequestFullscreen
+            || wrapper.msRequestFullscreen;
+
+        if (typeof requestFullscreen === 'function') {
+            requestFullscreen.call(wrapper);
+        } else {
+            showToast('Fullscreen is not supported on this browser.', 'info');
+        }
+    }
+};
+
+// Listen for fullscreen changes (including Esc key) to restore normal view
+document.addEventListener('fullscreenchange', handleFullscreenChange);
+document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+document.addEventListener('msfullscreenchange', handleFullscreenChange);
+
+function handleFullscreenChange() {
+    const isFullscreen = !!(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.msFullscreenElement
+    );
+
+    if (!isFullscreen) {
+        showYtVideoPlayer();
+        showYtControlsTemporarily(1800);
+    }
+}
+
+window.changeYtQuality = function(quality) {
+    if (!ytPlayer || !quality) return;
+    try {
+        showYtControlsTemporarily();
+        ytPlayer.setPlaybackQuality(quality);
+        showToast(`Quality set to ${quality.toUpperCase()}`, 'success');
+    } catch (err) {
+        showToast('Quality change failed or unavailable', 'error');
+    }
+};
+
+window.toggleYtSubtitles = function() {
+    if (!ytPlayer) return;
+    try {
+        showYtControlsTemporarily();
+        const ccBtn = document.getElementById('yt-cc-btn');
+        const tracksAvailable = ytPlayer.getVideoData().video_id && ytPlayer.getVideoData().video_id.length > 0;
+        
+        if (!tracksAvailable) {
+            showToast('Subtitles not available for this video', 'error');
+            return;
+        }
+        
+        if (ccBtn && ccBtn.classList.contains('active')) {
+            ytPlayer.unloadModule('captions');
+            ccBtn.classList.remove('active');
+            showToast('Subtitles disabled', 'success');
+        } else {
+            ytPlayer.loadModule('captions');
+            if (ccBtn) ccBtn.classList.add('active');
+            showToast('Subtitles enabled', 'success');
+        }
+    } catch (err) {
+        showToast('Could not toggle subtitles', 'error');
+    }
+};
+
+window.toggleYtEnlarge = function() {
+    const wrapper = document.getElementById('yt-video-wrapper');
+    if (!wrapper) return;
+    
+    const enlargeBtn = document.getElementById('yt-enlarge-btn');
+    if (!enlargeBtn) return;
+    
+    if (wrapper.classList.contains('yt-enlarged')) {
+        wrapper.classList.remove('yt-enlarged');
+        enlargeBtn.classList.remove('active');
+    } else {
+        wrapper.classList.add('yt-enlarged');
+        enlargeBtn.classList.add('active');
+    }
+
+    showYtControlsTemporarily();
+};
 
 function applyYtPreferredQuality(player) {
     if (!player) return;
@@ -1002,12 +1154,13 @@ function _createYtPlayer(videoId, startTime, autoplay) {
         height: '100%',
         playerVars: {
             autoplay: autoplay ? 1 : 0,
-            controls: 1,
+            controls: 0,
             start: Math.floor(startTime || 0),
             rel: 0,
             modestbranding: 1,
             playsinline: 1,
             fs: 1,
+            disablekb: 1,
             origin: window.location.origin
         },
         events: {
@@ -1146,16 +1299,39 @@ function destroyYtPlayer() {
 
 function showYtVideoPlayer() {
     const wrapper = document.getElementById('yt-video-wrapper');
-    if (wrapper) wrapper.classList.remove('hidden');
+    if (wrapper) {
+        const wasHidden = wrapper.classList.contains('hidden');
+        wrapper.classList.remove('hidden');
+        ensureYtControlsBehavior();
+        if (wasHidden) {
+            showYtControlsTemporarily(1800);
+        }
+    }
     const artwork = document.getElementById('album-artwork');
     if (artwork) artwork.classList.add('hidden');
+    const roomMain = document.querySelector('.room-main');
+    if (roomMain) roomMain.classList.add('yt-video-mode');
+    const nowPlayingContent = document.querySelector('.now-playing-content');
+    if (nowPlayingContent) nowPlayingContent.classList.add('yt-video-mode');
+    const nowPlayingSection = document.querySelector('.now-playing-section');
+    if (nowPlayingSection) nowPlayingSection.classList.add('yt-video-active');
 }
 
 function hideYtVideoPlayer() {
     const wrapper = document.getElementById('yt-video-wrapper');
-    if (wrapper) wrapper.classList.add('hidden');
+    if (wrapper) {
+        wrapper.classList.add('hidden');
+        wrapper.classList.remove('yt-controls-visible');
+    }
+    clearYtControlsHideTimeout();
     const artwork = document.getElementById('album-artwork');
     if (artwork) artwork.classList.remove('hidden');
+    const roomMain = document.querySelector('.room-main');
+    if (roomMain) roomMain.classList.remove('yt-video-mode');
+    const nowPlayingContent = document.querySelector('.now-playing-content');
+    if (nowPlayingContent) nowPlayingContent.classList.remove('yt-video-mode');
+    const nowPlayingSection = document.querySelector('.now-playing-section');
+    if (nowPlayingSection) nowPlayingSection.classList.remove('yt-video-active');
 }
 
 // ===== External Search (JioSaavn + YouTube Music + YouTube Videos) =====
@@ -1560,12 +1736,22 @@ const pendingAddSongs = new Set();
 
 function addToQueue(songId) {
     if (pendingAddSongs.has(songId)) return; // prevent duplicate queuing
+
+    const selectedSong = Array.isArray(_allSearchResults)
+        ? _allSearchResults.find(song => song && song.id === songId)
+        : null;
+
     const doAdd = () => {
         pendingAddSongs.delete(songId);
         stompClient.send('/app/room.queue.add', {}, JSON.stringify({
             roomCode: currentRoom.roomCode,
             songId: songId,
-            username: currentUser
+            username: currentUser,
+            title: selectedSong ? selectedSong.title : undefined,
+            artist: selectedSong ? selectedSong.artist : undefined,
+            album: selectedSong ? selectedSong.album : undefined,
+            coverUrl: selectedSong ? selectedSong.coverUrl : undefined,
+            durationSeconds: selectedSong ? (selectedSong.durationSeconds || 0) : 0
         }));
         showToast('Song added to queue!', 'success');
     };
@@ -1662,16 +1848,15 @@ function playSongAtIndex(index) {
         showToast('Only the host can choose the next song', 'info');
         return;
     }
+    if (!currentRoom || !Array.isArray(currentRoom.queue) || index < 0 || index >= currentRoom.queue.length) {
+        showToast('Unable to select that song right now. Try again.', 'error');
+        return;
+    }
+
     const selectedSong = currentRoom && Array.isArray(currentRoom.queue)
         ? currentRoom.queue[index]
         : null;
     const isSelectedVideo = !!(selectedSong && selectedSong.id && selectedSong.id.startsWith('ytv_'));
-
-    // If a song is currently playing, don't interrupt it
-    if (isPlaying && currentSongIndex >= 0 && !isSelectedVideo) {
-        showToast('Song will play when its turn comes in the queue', 'info');
-        return;
-    }
 
     if (isSelectedVideo) {
         stopAudioPlayback(true);

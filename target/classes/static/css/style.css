@@ -793,6 +793,7 @@ body {
     display: flex;
     flex-direction: column;
     height: 100vh;
+    min-height: 0;
     overflow-y: auto;
     background: var(--bg-primary);
 }
@@ -1371,7 +1372,7 @@ body {
 
 /* YouTube Video Player in Now Playing */
 .yt-video-wrapper {
-    width: 320px;
+    width: min(100%, 420px);
     aspect-ratio: 16 / 9;
     border-radius: var(--radius-lg);
     overflow: hidden;
@@ -1379,6 +1380,7 @@ body {
     background: #000;
     flex-shrink: 0;
     position: relative;
+    cursor: none;
 }
 .yt-video-wrapper #yt-player,
 .yt-video-wrapper iframe {
@@ -1388,7 +1390,159 @@ body {
     width: 100%;
     height: 100%;
     border: none;
+    pointer-events: none;
 }
+
+.yt-controls {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    z-index: 3;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(10px);
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
+}
+
+.yt-video-wrapper.yt-controls-visible .yt-controls {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.yt-video-wrapper.yt-controls-visible {
+    cursor: default;
+}
+
+.yt-quality-control {
+    display: flex;
+    align-items: center;
+}
+
+.yt-quality-control select {
+    padding: 6px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    border-radius: 6px;
+    background: rgba(12, 12, 12, 0.75);
+    color: #fff;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    pointer-events: auto;
+}
+
+.yt-quality-control select:hover {
+    background: rgba(12, 12, 12, 0.9);
+}
+
+.yt-quality-control select option {
+    background: #222;
+    color: #fff;
+}
+
+.yt-control-btn {
+    width: 36px;
+    height: 36px;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    border-radius: 6px;
+    background: rgba(12, 12, 12, 0.62);
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    font-size: 14px;
+    pointer-events: auto;
+    transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.yt-control-btn:hover {
+    background: rgba(12, 12, 12, 0.82);
+}
+
+.yt-control-btn:active {
+    transform: scale(0.95);
+}
+
+.yt-control-btn.active {
+    background: rgba(29, 185, 84, 0.5);
+    border-color: rgba(29, 185, 84, 0.7);
+}
+
+.yt-fullscreen-btn {
+    position: relative;
+}
+
+/* Theater mode (enlarged) styling */
+.yt-video-wrapper.yt-enlarged {
+    width: min(100vw - 16px, 100%);
+    aspect-ratio: 16 / 9;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 1000;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+    max-width: 95vw;
+    max-height: 95vh;
+}
+
+.yt-video-wrapper.yt-enlarged ~ .yt-controls {
+    z-index: 1001;
+}
+
+/* Larger focused layout when YouTube video is active */
+.now-playing-section.yt-video-active {
+    flex-shrink: 0;
+    padding-top: 28px;
+    padding-bottom: 20px;
+}
+.now-playing-content.yt-video-mode {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 16px;
+    max-width: 920px;
+}
+.now-playing-content.yt-video-mode .album-artwork-container {
+    width: min(100%, 780px);
+}
+.now-playing-content.yt-video-mode .yt-video-wrapper {
+    width: min(100%, calc(min(46vh, 420px) * 16 / 9));
+    width: min(100%, calc(min(46dvh, 420px) * 16 / 9));
+    max-width: 100%;
+    margin: 0 auto;
+}
+.now-playing-content.yt-video-mode .song-details {
+    width: min(100%, 860px);
+}
+.now-playing-content.yt-video-mode .song-album {
+    margin-bottom: 18px;
+}
+.now-playing-content.yt-video-mode .progress-container {
+    margin-bottom: 14px;
+}
+.now-playing-content.yt-video-mode .playback-controls {
+    justify-content: center;
+    margin-bottom: 10px;
+}
+.now-playing-content.yt-video-mode .host-indicator {
+    margin: 0 auto;
+}
+
+/* Keep room scrolling on one container while video mode is active. */
+.room-main.yt-video-mode .tab-content.active {
+    flex: 0 0 auto;
+    overflow: visible;
+}
+
 #filter-youtube.disabled:hover {
     opacity: 0.28;
 }
@@ -1861,7 +2015,7 @@ body {
         height: 200px;
     }
     .yt-video-wrapper {
-        width: 240px;
+        width: min(100%, 360px);
     }
     .song-title {
         font-size: 24px;
@@ -1926,5 +2080,18 @@ body {
         width: 30px;
         height: 30px;
         opacity: 1;
+    }
+}
+
+/* ===== Mobile: Full-width YouTube Video Player ===== */
+@media (max-width: 768px) {
+    .now-playing-section.yt-video-active {
+        padding: 16px 8px 12px;
+    }
+    .now-playing-content.yt-video-mode .album-artwork-container {
+        width: 100%;
+    }
+    .now-playing-content.yt-video-mode .yt-video-wrapper {
+        border-radius: var(--radius-md);
     }
 }

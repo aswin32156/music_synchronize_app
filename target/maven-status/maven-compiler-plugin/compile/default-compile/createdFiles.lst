@@ -18,6 +18,7 @@ com\musicsync\model\Room.class
 com\musicsync\service\SpotifyService.class
 com\musicsync\model\PersistentUser.class
 com\musicsync\dto\QueueRequest.class
+com\musicsync\service\MusicService$CachedExternalSearch.class
 com\musicsync\service\RoomService.class
 com\musicsync\MusicSyncApplication.class
 com\musicsync\model\User.class

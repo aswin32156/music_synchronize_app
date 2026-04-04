@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MusicSync - Listen Together</title>
-    <link rel="stylesheet" href="/css/style.css?v=20260314-02">
+    <link rel="stylesheet" href="/css/style.css?v=20260316-09">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
@@ -270,6 +270,26 @@
                             <!-- YouTube Video Player (shown when a ytv_ song is playing) -->
                             <div class="yt-video-wrapper hidden" id="yt-video-wrapper">
                                 <div id="yt-player"></div>
+                                <div class="yt-controls">
+                                    <div class="yt-quality-control">
+                                        <select id="yt-quality-selector" onchange="changeYtQuality(this.value)" title="Video Quality">
+                                            <option value="small">360p</option>
+                                            <option value="medium" selected>480p</option>
+                                            <option value="large">720p</option>
+                                            <option value="hd720">HD (720p)</option>
+                                            <option value="hd1080">HD (1080p)</option>
+                                        </select>
+                                    </div>
+                                    <button class="yt-control-btn" id="yt-cc-btn" type="button" onclick="toggleYtSubtitles()" title="Toggle Subtitles">
+                                        <i class="fas fa-closed-captioning"></i>
+                                    </button>
+                                    <button class="yt-control-btn" id="yt-enlarge-btn" type="button" onclick="toggleYtEnlarge()" title="Enlarge (Theater Mode)">
+                                        <i class="fas fa-window-maximize"></i>
+                                    </button>
+                                    <button class="yt-control-btn yt-fullscreen-btn" type="button" onclick="toggleYtFullscreen()" title="Toggle fullscreen video">
+                                        <i class="fas fa-expand"></i>
+                                    </button>
+                                </div>
                             </div>
                             <div class="sound-waves" id="sound-waves">
                                 <span></span><span></span><span></span><span></span><span></span>
@@ -416,6 +436,6 @@
         <span>Connecting...</span>
     </div>
 
-    <script src="js/app.js?v=20260314-15"></script>
+    <script src="/js/app.js?v=20260316-09"></script>
 </body>
 </html>
