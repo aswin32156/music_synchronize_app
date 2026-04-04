@@ -1355,7 +1355,43 @@ function setSingleActiveSource(source) {
 }
 
 function cloneSearchResults(results) {
-    return Array.isArray(results) ? results.map(song => ({ ...song })) : [];
+    if (!Array.isArray(results)) return [];
+
+    return results.map(song => {
+        const cloned = { ...song };
+
+        // Normalize duration from mixed payload shapes (number, string, or alternate fields).
+        const rawDuration = cloned.durationSeconds ?? cloned.duration ?? cloned.lengthSeconds ?? cloned.lengthText;
+        cloned.durationSeconds = normalizeDurationSeconds(rawDuration);
+
+        return cloned;
+    });
+}
+
+function normalizeDurationSeconds(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.max(0, Math.floor(value));
+    }
+
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return 0;
+
+        if (/^\d+$/.test(trimmed)) {
+            return Math.max(0, parseInt(trimmed, 10));
+        }
+
+        const clockMatch = trimmed.match(/(?:\d{1,2}:)?\d{1,2}:\d{2}/);
+        if (clockMatch) {
+            return clockMatch[0].split(':').reduce((total, part) => {
+                const n = parseInt(part, 10);
+                if (Number.isNaN(n)) return total;
+                return (total * 60) + n;
+            }, 0);
+        }
+    }
+
+    return 0;
 }
 
 function getFilteredSearchResults(results = _allSearchResults) {
@@ -1523,7 +1559,18 @@ async function searchExternal(preserveCurrentView = true) {
     try {
         const res = await fetch('/api/music/search/external?q=' + encodeURIComponent(query) + '&limit=20');
         if (!res.ok) throw new Error('Search failed');
-        const songs = await res.json();
+        const payload = await res.json();
+
+        const jioSongs = Array.isArray(payload)
+            ? payload.filter(song => song && song.id && song.id.startsWith('jio_'))
+            : (Array.isArray(payload.jioSaavn) ? payload.jioSaavn : []);
+        const ytMusicSongs = Array.isArray(payload)
+            ? payload.filter(song => song && song.id && song.id.startsWith('yt_'))
+            : (Array.isArray(payload.youTubeMusic) ? payload.youTubeMusic : []);
+        const ytVideoSongs = Array.isArray(payload)
+            ? payload.filter(song => song && song.id && song.id.startsWith('ytv_'))
+            : (Array.isArray(payload.youTubeVideos) ? payload.youTubeVideos : []);
+        const songs = [...jioSongs, ...ytMusicSongs, ...ytVideoSongs];
 
         statusEl.classList.add('hidden');
 
@@ -1539,12 +1586,11 @@ async function searchExternal(preserveCurrentView = true) {
 
         _allSearchResults = cloneSearchResults(songs);
         updateSourceFilterButtons(
-            songs.some(s => s.id.startsWith('yt_')),
-            songs.some(s => s.id.startsWith('ytv_'))
+            ytMusicSongs.length > 0,
+            ytVideoSongs.length > 0
         );
 
-        const filtered = getFilteredSearchResults(_allSearchResults);
-        renderSearchResults(filtered);
+        renderSearchResults(_allSearchResults);
         _updateSearchBackBtn();
     } catch (e) {
         statusEl.classList.add('hidden');

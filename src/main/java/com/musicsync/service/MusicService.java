@@ -18,8 +18,9 @@ public class MusicService {
 
     private static final int SEARCH_PROVIDER_LIMIT_CAP = 12;
     private static final int SEARCH_JIO_TIMEOUT_MS = 2200;
-    private static final int SEARCH_YOUTUBE_TIMEOUT_MS = 4800;
+    private static final int SEARCH_YOUTUBE_TIMEOUT_MS = 12000;
     private static final long SEARCH_CACHE_TTL_MS = 30_000;
+    private static final String SEARCH_RESULT_VERSION = "yt-music-separation-v3";
 
     private final List<Song> library = new ArrayList<>();
     private final Map<String, Song> externalSongsCache = new ConcurrentHashMap<>();
@@ -206,7 +207,7 @@ public class MusicService {
         int normalizedLimit = Math.max(1, Math.min(limit, 30));
         int providerLimit = Math.max(6, Math.min(normalizedLimit, SEARCH_PROVIDER_LIMIT_CAP));
         String normalizedQuery = query.trim();
-        String searchKey = normalizedQuery.toLowerCase() + "#" + providerLimit;
+        String searchKey = SEARCH_RESULT_VERSION + "#" + normalizedQuery.toLowerCase() + "#" + providerLimit;
 
         CachedExternalSearch cachedSearch = externalSearchCache.get(searchKey);
         long now = System.currentTimeMillis();
@@ -232,6 +233,61 @@ public class MusicService {
         List<Song> jioResults = safeJoin(jioFuture);
         List<Song> ytResults = safeJoin(ytMusicFuture);
         List<Song> ytvResults = safeJoin(ytVideoFuture);
+
+        if (!ytResults.isEmpty() && !ytvResults.isEmpty()) {
+            Set<String> videoIdsInYtv = new LinkedHashSet<>();
+            for (Song videoSong : ytvResults) {
+                if (videoSong == null || videoSong.getId() == null) continue;
+                if (videoSong.getId().startsWith("ytv_") && videoSong.getId().length() > 4) {
+                    videoIdsInYtv.add(videoSong.getId().substring(4));
+                }
+            }
+
+            if (!videoIdsInYtv.isEmpty()) {
+                List<Song> nonOverlappingYtMusic = new ArrayList<>();
+                for (Song ytSong : ytResults) {
+                    if (ytSong == null || ytSong.getId() == null) continue;
+                    if (ytSong.getId().startsWith("yt_") && ytSong.getId().length() > 3) {
+                        String videoId = ytSong.getId().substring(3);
+                        if (videoIdsInYtv.contains(videoId)) {
+                            continue;
+                        }
+                    }
+
+                    nonOverlappingYtMusic.add(ytSong);
+                }
+                ytResults = nonOverlappingYtMusic;
+            }
+        }
+
+        if (ytResults.isEmpty() && !ytvResults.isEmpty()) {
+            List<Song> synthesizedMusic = synthesizeMusicResultsFromYouTubeVideos(ytvResults, providerLimit);
+            if (!synthesizedMusic.isEmpty()) {
+                Set<String> synthesizedIds = new LinkedHashSet<>();
+                for (Song s : synthesizedMusic) {
+                    if (s != null && s.getId() != null && s.getId().startsWith("yt_")) {
+                        synthesizedIds.add(s.getId().substring(3));
+                    }
+                }
+
+                if (!synthesizedIds.isEmpty()) {
+                    List<Song> remainingVideo = new ArrayList<>();
+                    for (Song v : ytvResults) {
+                        if (v == null || v.getId() == null || !v.getId().startsWith("ytv_")) {
+                            if (v != null) remainingVideo.add(v);
+                            continue;
+                        }
+                        String videoId = v.getId().substring(4);
+                        if (!synthesizedIds.contains(videoId)) {
+                            remainingVideo.add(v);
+                        }
+                    }
+                    ytvResults = remainingVideo;
+                }
+
+                ytResults = synthesizedMusic;
+            }
+        }
 
         if (ytvResults.isEmpty() && !ytResults.isEmpty()) {
             ytvResults = synthesizeVideoResultsFromYouTubeMusic(ytResults, providerLimit);
@@ -304,6 +360,51 @@ public class MusicService {
                     coverUrl,
                     Math.max(0, song.getDurationSeconds()),
                     ""));
+
+            if (synthesized.size() >= max) {
+                break;
+            }
+        }
+
+        return synthesized;
+    }
+
+    private List<Song> synthesizeMusicResultsFromYouTubeVideos(List<Song> ytvResults, int limit) {
+        List<Song> synthesized = new ArrayList<>();
+        if (ytvResults == null || ytvResults.isEmpty()) return synthesized;
+
+        int max = Math.max(1, Math.min(limit, ytvResults.size()));
+        for (Song videoSong : ytvResults) {
+            if (videoSong == null || videoSong.getId() == null || !videoSong.getId().startsWith("ytv_")) {
+                continue;
+            }
+
+            String title = videoSong.getTitle() == null ? "" : videoSong.getTitle().toLowerCase();
+            boolean likelyMusic = title.contains("audio")
+                    || title.contains("acoustic")
+                    || title.contains("remix")
+                    || title.contains("instrumental")
+                    || title.contains("song")
+                    || title.contains("lyrics")
+                    || title.contains("lyric")
+                    || title.contains("official music")
+                    || title.contains("official");
+            if (!likelyMusic) {
+                continue;
+            }
+
+            String videoId = videoSong.getId().substring(4);
+            if (videoId.isBlank()) continue;
+
+            synthesized.add(new Song(
+                    "yt_" + videoId,
+                    videoSong.getTitle(),
+                    videoSong.getArtist(),
+                    "YouTube Music",
+                    videoSong.getCoverUrl(),
+                    Math.max(0, videoSong.getDurationSeconds()),
+                    ""
+            ));
 
             if (synthesized.size() >= max) {
                 break;

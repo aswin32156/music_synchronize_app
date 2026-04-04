@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,8 +30,14 @@ public class YouTubeService {
 
     private static final Logger log = LoggerFactory.getLogger(YouTubeService.class);
     private static final String API_URL = "https://www.googleapis.com/youtube/v3";
+    private static final String YT_MUSIC_API_URL = "https://yt.lemnoslife.com/noKey";
     private static final String WEB_SEARCH_URL = "https://www.youtube.com/results?search_query=";
+    private static final String MUSIC_WEB_SEARCH_URL = "https://music.youtube.com/search?q=";
     private static final String OEMBED_URL = "https://www.youtube.com/oembed?url=";
+    private static final Pattern CLOCK_DURATION_PATTERN = Pattern.compile("\\b(?:\\d{1,2}:)?\\d{1,2}:\\d{2}\\b");
+    private static final Pattern HOUR_PATTERN = Pattern.compile("(\\d+)\\s*(?:h|hr|hrs|hour|hours)\\b");
+    private static final Pattern MINUTE_PATTERN = Pattern.compile("(\\d+)\\s*(?:m|min|mins|minute|minutes)\\b");
+    private static final Pattern SECOND_PATTERN = Pattern.compile("(\\d+)\\s*(?:s|sec|secs|second|seconds)\\b");
 
     @Value("${youtube.api-key:}")
     private String apiKey;
@@ -60,11 +68,28 @@ public class YouTubeService {
         if (query == null || query.isBlank()) return songs;
 
         int cappedLimit = Math.max(1, Math.min(limit, 50));
+        String musicQuery = buildMusicQuery(query);
         Set<String> seenIds = new LinkedHashSet<>();
 
+        List<Song> musicWebSongs = searchSongsFromYouTubeMusicWeb(musicQuery, cappedLimit);
+        for (Song song : musicWebSongs) {
+            if (!isLikelyMusicResult(song)) {
+                continue;
+            }
+            if (seenIds.add(song.getId())) {
+                songs.add(song);
+            }
+            if (songs.size() >= cappedLimit) {
+                return songs;
+            }
+        }
+
         if (isApiConfigured()) {
-            List<Song> apiSongs = searchSongsWithApi(query, cappedLimit);
+            List<Song> apiSongs = searchSongsWithApi(musicQuery, cappedLimit);
             for (Song song : apiSongs) {
+                if (!isLikelyMusicResult(song)) {
+                    continue;
+                }
                 if (seenIds.add(song.getId())) {
                     songs.add(song);
                 }
@@ -74,17 +99,288 @@ public class YouTubeService {
             }
         }
 
-        List<Song> webSongs = searchSongsFromWeb(query, cappedLimit);
-        for (Song song : webSongs) {
-            if (seenIds.add(song.getId())) {
-                songs.add(song);
+        if (songs.size() < cappedLimit) {
+            // Dedicated YouTube Music API path. Keep this as final fallback because DNS/network
+            // failures on third-party hosts can block longer than regular YouTube web lookups.
+            List<Song> musicApiSongs = searchSongsWithMusicApi(musicQuery, cappedLimit);
+            for (Song song : musicApiSongs) {
+                if (!isLikelyMusicResult(song)) {
+                    continue;
+                }
+                if (seenIds.add(song.getId())) {
+                    songs.add(song);
+                }
+                if (songs.size() >= cappedLimit) {
+                    return songs;
+                }
             }
-            if (songs.size() >= cappedLimit) {
-                break;
+        }
+
+        if (songs.isEmpty()) {
+            // Last fallback: use regular YouTube web search with music query and strict filtering.
+            List<Song> webSongs = searchSongsFromWeb(musicQuery, cappedLimit);
+            for (Song song : webSongs) {
+                if (!isLikelyMusicResult(song)) {
+                    continue;
+                }
+                if (seenIds.add(song.getId())) {
+                    songs.add(song);
+                }
+                if (songs.size() >= cappedLimit) {
+                    break;
+                }
             }
         }
 
         return songs;
+    }
+
+    private List<Song> searchSongsFromYouTubeMusicWeb(String query, int limit) {
+        List<Song> songs = new ArrayList<>();
+
+        try {
+            String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
+            String response = restTemplate.getForObject(MUSIC_WEB_SEARCH_URL + encodedQuery, String.class);
+            if (response == null || response.isBlank()) return songs;
+
+            String initialData = extractInitialDataJson(response);
+            if (initialData == null || initialData.isBlank()) return songs;
+
+            JsonObject dataObj = JsonParser.parseString(initialData).getAsJsonObject();
+            List<JsonObject> renderers = new ArrayList<>();
+            collectMusicRenderers(dataObj, renderers);
+
+            Set<String> seen = new LinkedHashSet<>();
+            for (JsonObject renderer : renderers) {
+                Song song = parseMusicRenderer(renderer);
+                if (song == null) continue;
+                if (seen.add(song.getId())) {
+                    songs.add(song);
+                }
+                if (songs.size() >= limit) break;
+            }
+        } catch (Exception e) {
+            log.warn("YouTube Music web search failed for query '{}': {}", query, e.getMessage());
+        }
+
+        return songs;
+    }
+
+    private void collectMusicRenderers(JsonElement element, List<JsonObject> renderers) {
+        if (element == null || element.isJsonNull()) return;
+
+        if (element.isJsonObject()) {
+            JsonObject object = element.getAsJsonObject();
+            if (object.has("musicResponsiveListItemRenderer")
+                    && object.get("musicResponsiveListItemRenderer").isJsonObject()) {
+                renderers.add(object.getAsJsonObject("musicResponsiveListItemRenderer"));
+            }
+            for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
+                collectMusicRenderers(entry.getValue(), renderers);
+            }
+            return;
+        }
+
+        if (element.isJsonArray()) {
+            for (JsonElement item : element.getAsJsonArray()) {
+                collectMusicRenderers(item, renderers);
+            }
+        }
+    }
+
+    private Song parseMusicRenderer(JsonObject renderer) {
+        String videoId = extractMusicVideoId(renderer);
+        if (videoId == null || videoId.isBlank()) return null;
+
+        String title = extractMusicText(renderer, 0);
+        if (title == null || title.isBlank()) return null;
+
+        String artist = extractMusicArtist(renderer);
+        if (artist == null || artist.isBlank()) {
+            artist = "Unknown Artist";
+        }
+
+        int duration = extractMusicDuration(renderer);
+        String coverUrl = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
+        String audioUrl = fallbackAudioCache.getOrDefault(videoId, "");
+
+        return new Song("yt_" + videoId, title, artist, "YouTube Music", coverUrl, duration, audioUrl);
+    }
+
+    private String extractMusicVideoId(JsonObject renderer) {
+        if (renderer == null) return null;
+
+        if (renderer.has("playlistItemData") && renderer.get("playlistItemData").isJsonObject()) {
+            String id = getStringField(renderer.getAsJsonObject("playlistItemData"), "videoId");
+            if (id != null && !id.isBlank()) return id;
+        }
+
+        if (renderer.has("navigationEndpoint") && renderer.get("navigationEndpoint").isJsonObject()) {
+            JsonObject endpoint = renderer.getAsJsonObject("navigationEndpoint");
+            if (endpoint.has("watchEndpoint") && endpoint.get("watchEndpoint").isJsonObject()) {
+                String id = getStringField(endpoint.getAsJsonObject("watchEndpoint"), "videoId");
+                if (id != null && !id.isBlank()) return id;
+            }
+        }
+
+        if (renderer.has("flexColumns") && renderer.get("flexColumns").isJsonArray()) {
+            for (JsonElement columnElement : renderer.getAsJsonArray("flexColumns")) {
+                if (!columnElement.isJsonObject()) continue;
+                JsonObject columnObj = columnElement.getAsJsonObject();
+                if (!columnObj.has("musicResponsiveListItemFlexColumnRenderer")) continue;
+                JsonObject flex = columnObj.getAsJsonObject("musicResponsiveListItemFlexColumnRenderer");
+                if (!flex.has("text") || !flex.get("text").isJsonObject()) continue;
+                JsonObject textObj = flex.getAsJsonObject("text");
+                if (!textObj.has("runs") || !textObj.get("runs").isJsonArray()) continue;
+                for (JsonElement runElement : textObj.getAsJsonArray("runs")) {
+                    if (!runElement.isJsonObject()) continue;
+                    JsonObject runObj = runElement.getAsJsonObject();
+                    if (!runObj.has("navigationEndpoint") || !runObj.get("navigationEndpoint").isJsonObject()) continue;
+                    JsonObject endpoint = runObj.getAsJsonObject("navigationEndpoint");
+                    if (!endpoint.has("watchEndpoint") || !endpoint.get("watchEndpoint").isJsonObject()) continue;
+                    String id = getStringField(endpoint.getAsJsonObject("watchEndpoint"), "videoId");
+                    if (id != null && !id.isBlank()) return id;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private String extractMusicText(JsonObject renderer, int columnIndex) {
+        if (renderer == null || !renderer.has("flexColumns") || !renderer.get("flexColumns").isJsonArray()) {
+            return null;
+        }
+        JsonArray columns = renderer.getAsJsonArray("flexColumns");
+        if (columns.size() <= columnIndex || !columns.get(columnIndex).isJsonObject()) {
+            return null;
+        }
+        JsonObject col = columns.get(columnIndex).getAsJsonObject();
+        if (!col.has("musicResponsiveListItemFlexColumnRenderer")
+                || !col.get("musicResponsiveListItemFlexColumnRenderer").isJsonObject()) {
+            return null;
+        }
+        JsonObject flex = col.getAsJsonObject("musicResponsiveListItemFlexColumnRenderer");
+        return getTextField(flex.get("text"));
+    }
+
+    private String extractMusicArtist(JsonObject renderer) {
+        String text = extractMusicText(renderer, 1);
+        if (text == null || text.isBlank()) return null;
+        String[] parts = text.split("\\u2022");
+        String artist = parts.length > 0 ? parts[0].trim() : text.trim();
+        return artist.isBlank() ? text.trim() : artist;
+    }
+
+    private int extractMusicDuration(JsonObject renderer) {
+        if (renderer == null) return 0;
+
+        // Many YT Music results expose duration in subtitle/accessibility instead of fixedColumns.
+        int subtitleDuration = extractDurationFromText(getTextField(renderer.get("subtitle")));
+        if (subtitleDuration > 0) return subtitleDuration;
+
+        if (renderer.has("accessibility") && renderer.get("accessibility").isJsonObject()) {
+            JsonObject accessibility = renderer.getAsJsonObject("accessibility");
+            if (accessibility.has("accessibilityData") && accessibility.get("accessibilityData").isJsonObject()) {
+                String label = getStringField(accessibility.getAsJsonObject("accessibilityData"), "label");
+                int accessibilityDuration = extractDurationFromText(label);
+                if (accessibilityDuration > 0) return accessibilityDuration;
+            }
+        }
+
+        if (!renderer.has("fixedColumns") || !renderer.get("fixedColumns").isJsonArray()) {
+            return 0;
+        }
+
+        JsonArray fixedColumns = renderer.getAsJsonArray("fixedColumns");
+        for (JsonElement element : fixedColumns) {
+            if (!element.isJsonObject()) continue;
+            JsonObject obj = element.getAsJsonObject();
+            if (!obj.has("musicResponsiveListItemFixedColumnRenderer")
+                    || !obj.get("musicResponsiveListItemFixedColumnRenderer").isJsonObject()) {
+                continue;
+            }
+            JsonObject fixed = obj.getAsJsonObject("musicResponsiveListItemFixedColumnRenderer");
+            String text = getTextField(fixed.get("text"));
+            int duration = parseDurationLabel(text);
+            if (duration > 0) return duration;
+        }
+
+        // Last resort: inspect the serialized renderer for embedded duration markers.
+        int parsedFromJson = parseDurationLabel(renderer.toString());
+        if (parsedFromJson > 0) return parsedFromJson;
+
+        return 0;
+    }
+
+    private int extractDurationFromText(String text) {
+        if (text == null || text.isBlank()) return 0;
+
+        String[] tokens = text.split("[•·|,/]");
+        for (int i = tokens.length - 1; i >= 0; i--) {
+            String token = tokens[i].trim();
+            int parsed = parseDurationLabel(token);
+            if (parsed > 0) return parsed;
+        }
+
+        return parseDurationLabel(text);
+    }
+
+    private List<Song> searchSongsWithMusicApi(String query, int limit) {
+        List<Song> songs = new ArrayList<>();
+
+        try {
+            String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
+                String url = YT_MUSIC_API_URL + "/search?part=snippet&type=video&videoCategoryId=10"
+                    + "&maxResults=" + limit + "&q=" + encodedQuery;
+
+            String response = restTemplate.getForObject(url, String.class);
+            if (response == null || response.isBlank()) return songs;
+
+            JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+            JsonArray items = json.has("items") ? json.getAsJsonArray("items") : null;
+            if (items == null) return songs;
+
+            for (int i = 0; i < items.size(); i++) {
+                JsonObject item = items.get(i).getAsJsonObject();
+                Song song = parseSearchItem(item);
+                if (song != null) {
+                    songs.add(song);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("YouTube Music API search failed for query '{}': {}", query, e.getMessage());
+        }
+
+        return songs;
+    }
+
+    private String buildMusicQuery(String query) {
+        String normalized = query == null ? "" : query.trim();
+        if (normalized.isBlank()) {
+            return normalized;
+        }
+        String lower = normalized.toLowerCase();
+        if (lower.contains(" audio") || lower.contains(" song") || lower.contains(" track")) {
+            return normalized;
+        }
+        return normalized + " audio";
+    }
+
+    private boolean isLikelyMusicResult(Song song) {
+        if (song == null) return false;
+        String title = song.getTitle() == null ? "" : song.getTitle().toLowerCase();
+
+        String[] blockedTitleTokens = {
+            "reaction", "trailer", "teaser", "vlog", "shorts"
+        };
+        for (String token : blockedTitleTokens) {
+            if (title.contains(token)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private List<Song> searchSongsWithApi(String query, int limit) {
@@ -247,10 +543,42 @@ public class YouTubeService {
         String artist = getStringField(snippet, "channelTitle");
         if (artist == null || artist.isEmpty()) artist = "Unknown Artist";
 
+        int duration = extractDurationFromSearchItem(item);
         String coverUrl = getThumbnailUrl(snippet);
         String audioUrl = fallbackAudioCache.getOrDefault(videoId, "");
 
-        return new Song("yt_" + videoId, title, artist, "YouTube Music", coverUrl, 0, audioUrl);
+        return new Song("yt_" + videoId, title, artist, "YouTube Music", coverUrl, duration, audioUrl);
+    }
+
+    private int extractDurationFromSearchItem(JsonObject item) {
+        if (item == null) return 0;
+
+        if (item.has("contentDetails") && item.get("contentDetails").isJsonObject()) {
+            String isoDuration = getStringField(item.getAsJsonObject("contentDetails"), "duration");
+            int parsedIso = parseDurationSeconds(isoDuration);
+            if (parsedIso > 0) return parsedIso;
+        }
+
+        if (item.has("duration") && !item.get("duration").isJsonNull()) {
+            int parsed = parseDurationLabel(item.get("duration").getAsString());
+            if (parsed > 0) return parsed;
+        }
+
+        if (item.has("lengthText") && item.get("lengthText").isJsonObject()) {
+            int parsed = parseDurationLabel(getTextField(item.get("lengthText")));
+            if (parsed > 0) return parsed;
+        }
+
+        if (item.has("lengthSeconds") && !item.get("lengthSeconds").isJsonNull()) {
+            try {
+                int parsed = Integer.parseInt(item.get("lengthSeconds").getAsString());
+                if (parsed > 0) return parsed;
+            } catch (NumberFormatException e) {
+                // Ignore malformed duration values and fall through to 0.
+            }
+        }
+
+        return 0;
     }
 
     private Song parseVideoRenderer(JsonObject renderer) {
@@ -411,7 +739,35 @@ public class YouTubeService {
     private int parseDurationLabel(String durationLabel) {
         if (durationLabel == null || durationLabel.isBlank()) return 0;
 
-        String normalized = durationLabel.trim().replaceAll("[^0-9:]", "");
+        String trimmed = durationLabel.trim();
+
+        // Extract common clock formats even when embedded in larger text.
+        Matcher clockMatcher = CLOCK_DURATION_PATTERN.matcher(trimmed);
+        if (clockMatcher.find()) {
+            String[] parts = clockMatcher.group().split(":");
+            int total = 0;
+            for (String part : parts) {
+                if (part.isBlank()) return 0;
+                try {
+                    total = total * 60 + Integer.parseInt(part);
+                } catch (NumberFormatException e) {
+                    return 0;
+                }
+            }
+            return total;
+        }
+
+        // Handle labels like "3 minutes 28 seconds".
+        String lower = trimmed.toLowerCase();
+        int hours = extractUnitValue(HOUR_PATTERN, lower);
+        int minutes = extractUnitValue(MINUTE_PATTERN, lower);
+        int seconds = extractUnitValue(SECOND_PATTERN, lower);
+        int textDuration = (hours * 3600) + (minutes * 60) + seconds;
+        if (textDuration > 0) {
+            return textDuration;
+        }
+
+        String normalized = trimmed.replaceAll("[^0-9:]", "");
         if (normalized.isBlank() || !normalized.contains(":")) return 0;
 
         String[] parts = normalized.split(":");
@@ -426,6 +782,18 @@ public class YouTubeService {
         }
 
         return total;
+    }
+
+    private int extractUnitValue(Pattern pattern, String text) {
+        Matcher matcher = pattern.matcher(text);
+        if (matcher.find()) {
+            try {
+                return Integer.parseInt(matcher.group(1));
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+        return 0;
     }
 
     private String resolveFallbackAudio(String videoId, String title, String artist) {
