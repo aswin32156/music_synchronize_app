@@ -383,7 +383,7 @@ public class WebSocketController {
         playbackUpdate.put("queueSize", room.getQueue().size());
         playbackUpdate.put("syncTick", syncTick);
         playbackUpdate.put("serverTimeMs", System.currentTimeMillis());
-        messagingTemplate.convertAndSend("/topic/room/" + roomCode + "/playback", playbackUpdate);
+        messagingTemplate.convertAndSend("/topic/room/" + roomCode + "/playback", (Object) playbackUpdate);
     }
 
     private org.springframework.messaging.simp.SimpMessageHeaderAccessor createHeaders(String sessionId) {
