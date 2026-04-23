@@ -3,7 +3,9 @@ package com.musicsync.service;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +24,9 @@ public class JioSaavnService {
 
     private static final Logger log = LoggerFactory.getLogger(JioSaavnService.class);
     private static final String BASE_URL = "https://jiosaavn-api-privatecvc2.vercel.app";
+    private static final int MAX_SEARCH_LIMIT = 300;
+    private static final int PAGE_SIZE = 50;
+    private static final int MAX_PAGES = 6;
     private final RestTemplate restTemplate;
 
     public JioSaavnService() {
@@ -34,25 +39,47 @@ public class JioSaavnService {
     public List<Song> searchSongs(String query, int limit) {
         List<Song> songs = new ArrayList<>();
         try {
+            int requested = Math.max(1, Math.min(limit, MAX_SEARCH_LIMIT));
+            int pageSize = Math.min(PAGE_SIZE, requested);
             String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
-            String url = BASE_URL + "/search/songs?query=" + encodedQuery + "&limit=" + limit;
-            String response = restTemplate.getForObject(url, String.class);
-            if (response == null) return songs;
+            Set<String> seenIds = new LinkedHashSet<>();
 
-            JsonObject json = JsonParser.parseString(response).getAsJsonObject();
-            String status = getStringField(json, "status");
-            if (!"SUCCESS".equals(status)) {
-                return songs;
-            }
+            for (int page = 1; page <= MAX_PAGES && songs.size() < requested; page++) {
+                String url = BASE_URL + "/search/songs?query=" + encodedQuery + "&limit=" + pageSize + "&page=" + page;
+                String response = restTemplate.getForObject(url, String.class);
+                if (response == null) break;
 
-            JsonObject data = json.getAsJsonObject("data");
-            if (data == null || !data.has("results")) return songs;
+                JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+                String status = getStringField(json, "status");
+                if (!"SUCCESS".equals(status)) {
+                    break;
+                }
 
-            JsonArray results = data.getAsJsonArray("results");
-            for (JsonElement elem : results) {
-                Song song = parseSong(elem.getAsJsonObject());
-                if (song != null) {
-                    songs.add(song);
+                JsonObject data = json.getAsJsonObject("data");
+                if (data == null || !data.has("results")) break;
+
+                JsonArray results = data.getAsJsonArray("results");
+                if (results == null || results.isEmpty()) {
+                    break;
+                }
+
+                int addedInPage = 0;
+                for (JsonElement elem : results) {
+                    Song song = parseSong(elem.getAsJsonObject());
+                    if (song == null || song.getId() == null || song.getId().isBlank()) {
+                        continue;
+                    }
+                    if (seenIds.add(song.getId())) {
+                        songs.add(song);
+                        addedInPage++;
+                    }
+                    if (songs.size() >= requested) {
+                        break;
+                    }
+                }
+
+                if (addedInPage == 0 || results.size() < pageSize) {
+                    break;
                 }
             }
         } catch (Exception e) {

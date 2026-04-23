@@ -76,6 +76,8 @@ let isConnecting = false;
 let pendingActions = [];
 let roomStateRefreshTimeout = null;
 let roomStatePollInterval = null;
+let ytVideoSafetyCheckInterval = null;
+let ytForcePlayInterval = null; // Continuous monitor to ensure playback never stops
 let friendsRefreshInterval = null;
 
 function refreshFriendsDataSafely() {
@@ -153,6 +155,75 @@ function startRoomStatePolling(roomCode) {
 
         refreshRoomStateOnce(roomCode);
     }, 4000);
+    
+    // Start YouTube safety check to catch missed background pause events
+    startYtVideoSafetyCheck();
+}
+
+function startYtVideoSafetyCheck() {
+    if (ytVideoSafetyCheckInterval) clearInterval(ytVideoSafetyCheckInterval);
+    if (ytForcePlayInterval) clearInterval(ytForcePlayInterval);
+    
+    // Ultra-aggressive force-play monitor - runs frequently to catch ANY pause
+    ytForcePlayInterval = setInterval(() => {
+        if (!currentRoom || !ytPlayer || !window.YT) return;
+        
+        const activeSong = currentRoom && Array.isArray(currentRoom.queue)
+            ? currentRoom.queue[currentSongIndex]
+            : null;
+        
+        const isVideoSong = !!(activeSong && activeSong.id && activeSong.id.startsWith('ytv_'));
+        const shouldBePlaying = !!(currentRoom.playbackState && currentRoom.playbackState.playing && isVideoSong);
+        
+        if (!shouldBePlaying) return;
+        
+        try {
+            const state = ytPlayer.getPlayerState();
+            // If video should be playing but ISN'T, force it to play IMMEDIATELY
+            if (state !== YT.PlayerState.PLAYING && state !== YT.PlayerState.BUFFERING) {
+                console.log('[YouTube Force-Play] Paused detected (state ' + state + ') - FORCING RESUME');
+                suppressYtStateSync(1500);
+                ytPlayer.playVideo();
+            }
+        } catch (err) {
+            // Try playing even on error
+            try { ytPlayer.playVideo(); } catch (e) {}
+        }
+    }, YT_FORCE_PLAY_CHECK_MS); // Check every 400ms to catch pauses immediately
+    
+    // Additional fallback check every 3 seconds for resilience
+    ytVideoSafetyCheckInterval = setInterval(() => {
+        if (!currentRoom || !ytPlayer || !window.YT || !document.visibilityState) return;
+        
+        const activeSong = currentRoom && Array.isArray(currentRoom.queue)
+            ? currentRoom.queue[currentSongIndex]
+            : null;
+        
+        const isVideoSong = !!(activeSong && activeSong.id && activeSong.id.startsWith('ytv_'));
+        const shouldBePlaying = !!(currentRoom.playbackState && currentRoom.playbackState.playing && isVideoSong);
+        
+        if (!shouldBePlaying || document.visibilityState !== 'visible') return;
+        
+        try {
+            const state = ytPlayer.getPlayerState();
+            if (state !== YT.PlayerState.PLAYING && state !== YT.PlayerState.BUFFERING) {
+                console.log('[YouTube Fallback Check] Paused (state ' + state + ') - forcing play');
+                suppressYtStateSync(1200);
+                ytPlayer.playVideo();
+            }
+        } catch (err) {}
+    }, 3000);
+}
+
+function stopYtVideoSafetyCheck() {
+    if (ytVideoSafetyCheckInterval) {
+        clearInterval(ytVideoSafetyCheckInterval);
+        ytVideoSafetyCheckInterval = null;
+    }
+    if (ytForcePlayInterval) {
+        clearInterval(ytForcePlayInterval);
+        ytForcePlayInterval = null;
+    }
 }
 
 function stopRoomStatePolling() {
@@ -164,6 +235,7 @@ function stopRoomStatePolling() {
         clearTimeout(roomStateRefreshTimeout);
         roomStateRefreshTimeout = null;
     }
+    stopYtVideoSafetyCheck();
 }
 
 
@@ -329,11 +401,6 @@ audioPlayer.addEventListener('canplay', () => {
 });
 
 // Splash Screen - DISABLED, go directly to home
-document.addEventListener('DOMContentLoaded', () => {
-    console.log('DOM loaded, initializing...');
-    fetchStats();
-});
-
 // ===== API Calls =====
 async function fetchStats() {
     try {
@@ -897,6 +964,11 @@ let ytRecentBufferEvents = [];
 let ytLastQualityChangeAt = 0;
 let ytControlsHideTimeout = null;
 let ytControlsBehaviorBound = false;
+let ytLastBackgroundAt = 0;
+const YT_BACKGROUND_PAUSE_GRACE_MS = 12000; // Extended to 12s - very generous window for slow mobile transitions
+const YT_FORCE_PLAY_CHECK_MS = 400; // Check every 400ms to catch pauses immediately
+let ytUserPauseRequestedUntil = 0;
+const YT_USER_PAUSE_INTENT_WINDOW_MS = 3500;
 
 function clearYtControlsHideTimeout() {
     if (ytControlsHideTimeout) {
@@ -1102,6 +1174,27 @@ function isYtStateSyncSuppressed() {
     return Date.now() < ytStateSyncSuppressUntil;
 }
 
+function markYtBackgroundTransition() {
+    ytLastBackgroundAt = Date.now();
+}
+
+function isLikelyBackgroundPause() {
+    if (document.visibilityState === 'hidden') {
+        return true;
+    }
+
+    const elapsed = Date.now() - ytLastBackgroundAt;
+    return elapsed >= 0 && elapsed < YT_BACKGROUND_PAUSE_GRACE_MS;
+}
+
+function markYtUserPauseIntent(durationMs = YT_USER_PAUSE_INTENT_WINDOW_MS) {
+    ytUserPauseRequestedUntil = Date.now() + Math.max(0, durationMs || 0);
+}
+
+function hasRecentYtUserPauseIntent() {
+    return Date.now() < ytUserPauseRequestedUntil;
+}
+
 function shouldResyncYtTime(localTime, targetTime) {
     const local = Number(localTime) || 0;
     const target = Number(targetTime) || 0;
@@ -1119,6 +1212,81 @@ function shouldResyncYtTime(localTime, targetTime) {
 
     return false;
 }
+
+function maybeResumeYtAfterForeground() {
+    if (!currentRoom || !Array.isArray(currentRoom.queue) || currentSongIndex < 0) {
+        return;
+    }
+
+    const activeSong = currentRoom.queue[currentSongIndex];
+    const isVideoSong = !!(activeSong && activeSong.id && activeSong.id.startsWith('ytv_'));
+    if (!isVideoSong || !ytPlayer || !window.YT) {
+        return;
+    }
+
+    const serverSaysPlaying = !!(
+        currentRoom.playbackState
+        && currentRoom.playbackState.playing
+    );
+
+    if (!serverSaysPlaying || typeof ytPlayer.getPlayerState !== 'function' || typeof ytPlayer.playVideo !== 'function') {
+        return;
+    }
+
+    try {
+        const state = ytPlayer.getPlayerState();
+        // ALWAYS resume immediately if video should be playing but isn't
+        if (state !== YT.PlayerState.PLAYING && state !== YT.PlayerState.BUFFERING) {
+            suppressYtStateSync(2000); // Suppress state sync to prevent false reporting
+            console.log('[YouTube Foreground] App came to foreground - resuming from state:', state);
+            
+            // Multiple calls to ensure it sticks
+            ytPlayer.playVideo();
+            setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 50);
+            setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 100);
+            
+            scheduleRoomStateRefresh(300);
+        }
+    } catch (err) {
+        console.warn('[YouTube] Could not auto-resume after foreground:', err);
+        // Try anyway
+        try { ytPlayer.playVideo(); } catch (e) {}
+    }
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+        markYtBackgroundTransition();
+        return;
+    }
+
+    // App/tab came back to foreground - attempt to resume video
+    console.log('[YouTube] Foreground detected - checking if resume is needed');
+    window.setTimeout(maybeResumeYtAfterForeground, 100);
+});
+
+window.addEventListener('pagehide', markYtBackgroundTransition);
+
+window.addEventListener('pageshow', () => {
+    console.log('[YouTube] Page show event - attempting resume');
+    window.setTimeout(maybeResumeYtAfterForeground, 150);
+});
+
+window.addEventListener('blur', () => {
+    if (document.visibilityState !== 'visible') {
+        markYtBackgroundTransition();
+    }
+});
+
+// Mobile-specific: handle app resume events
+window.addEventListener('focus', () => {
+    // If window regains focus and we're still in background, this might be misleading
+    // but we'll still try to resume as a failsafe
+    if (currentRoom && currentRoom.playbackState && currentRoom.playbackState.playing) {
+        console.log('[YouTube] Window focus event - checking video state');
+        window.setTimeout(maybeResumeYtAfterForeground, 200);
+    }
+});
 
 window.onYouTubeIframeAPIReady = function() {
     ytPlayerReady = true;
@@ -1221,12 +1389,52 @@ function _createYtPlayer(videoId, startTime, autoplay) {
                     }
                 } else if (e.data === YT.PlayerState.PAUSED) {
                     const wasPlaying = isPlaying;
+                    const serverSaysPlaying = !!(
+                        currentRoom
+                        && currentRoom.playbackState
+                        && currentRoom.playbackState.playing
+                    );
+                    const hasUserPauseIntent = hasRecentYtUserPauseIntent();
+
+                    const ignoreAsBackgroundPause = (
+                        shouldSyncVideoState
+                        && !hasUserPauseIntent
+                        && (serverSaysPlaying || wasPlaying)
+                        && isLikelyBackgroundPause()
+                    );
+
+                    const ignoreAsUnexpectedSystemPause = (
+                        shouldSyncVideoState
+                        && !hasUserPauseIntent
+                        && serverSaysPlaying
+                    );
+
+                    if (ignoreAsBackgroundPause || ignoreAsUnexpectedSystemPause) {
+                        // Mobile browsers may force-pause iframe video when app/tab goes to background.
+                        // IMMEDIATELY resume - no delays, no flags, no conditions.
+                        console.log('[YouTube] Background pause detected - IMMEDIATE RESUME');
+                        
+                        suppressYtStateSync(2000); // Suppress state sync to prevent any false reports
+                        try {
+                            if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+                                // Call playVideo multiple times to ensure it sticks
+                                ytPlayer.playVideo();
+                                setTimeout(() => { if (ytPlayer && typeof ytPlayer.playVideo === 'function') ytPlayer.playVideo(); }, 50);
+                                setTimeout(() => { if (ytPlayer && typeof ytPlayer.playVideo === 'function') ytPlayer.playVideo(); }, 100);
+                                console.log('[YouTube] Video auto-resumed with redundant calls');
+                            }
+                        } catch (err) {
+                            console.warn('[YouTube] Failed to auto-resume video:', err);
+                        }
+                        return;
+                    }
+
                     isPlaying = false;
                     updatePlayPauseIcon();
                     stopProgressTimer();
                     document.getElementById('sound-waves').classList.remove('active');
 
-                    if (shouldSyncVideoState && !stateSyncSuppressed && wasPlaying) {
+                    if (shouldSyncVideoState && !stateSyncSuppressed && wasPlaying && hasUserPauseIntent) {
                         let videoTime = 0;
                         try { videoTime = e.target.getCurrentTime() || 0; } catch (err) {}
                         sendPlaybackCommand('pause', videoTime);
@@ -1557,7 +1765,7 @@ async function searchExternal(preserveCurrentView = true) {
     if (searchBackBtn) searchBackBtn.classList.add('hidden');
 
     try {
-        const res = await fetch('/api/music/search/external?q=' + encodeURIComponent(query) + '&limit=20');
+        const res = await fetch('/api/music/search/external?q=' + encodeURIComponent(query) + '&limit=200');
         if (!res.ok) throw new Error('Search failed');
         const payload = await res.json();
 
@@ -1845,6 +2053,7 @@ function togglePlayPause() {
         } else {
             try {
                 if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+                    markYtUserPauseIntent();
                     suppressYtStateSync(1000);
                     ytPlayer.pauseVideo();
                 }
@@ -2514,6 +2723,24 @@ document.addEventListener('DOMContentLoaded', () => {
     if (createRoomName) createRoomName.addEventListener('keypress', e => { if (e.key === 'Enter') createRoom(); });
     if (joinUsername) joinUsername.addEventListener('keypress', e => { if (e.key === 'Enter') document.getElementById('join-room-code').focus(); });
     if (joinRoomCode) joinRoomCode.addEventListener('keypress', e => { if (e.key === 'Enter') joinRoom(); });
+
+    // Attach button click listeners now that functions are defined
+    const createRoomBtn = document.getElementById('btn-create-room');
+    const joinRoomBtn = document.getElementById('btn-join-room');
+    
+    if (createRoomBtn) {
+        createRoomBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            createRoom();
+        });
+    }
+    
+    if (joinRoomBtn) {
+        joinRoomBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            joinRoom();
+        });
+    }
 
     document.addEventListener('keydown', e => {
         if (e.key === 'Escape') {

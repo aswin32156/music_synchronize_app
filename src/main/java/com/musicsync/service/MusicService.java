@@ -1,13 +1,19 @@
 package com.musicsync.service;
 
+import java.text.Normalizer;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Service;
 
@@ -16,11 +22,12 @@ import com.musicsync.model.Song;
 @Service
 public class MusicService {
 
-    private static final int SEARCH_PROVIDER_LIMIT_CAP = 12;
-    private static final int SEARCH_JIO_TIMEOUT_MS = 2200;
-    private static final int SEARCH_YOUTUBE_TIMEOUT_MS = 12000;
+    private static final int SEARCH_PROVIDER_LIMIT_CAP = 200;  // Raised to fetch more from each provider
+    private static final int SEARCH_JIO_TIMEOUT_MS = 5000;
+    private static final int SEARCH_YOUTUBE_TIMEOUT_MS = 15000;
     private static final long SEARCH_CACHE_TTL_MS = 30_000;
-    private static final String SEARCH_RESULT_VERSION = "yt-music-separation-v3";
+    private static final String SEARCH_RESULT_VERSION = "search-relevance-v4";
+    private static final Pattern SEARCH_NOISE_PATTERN = Pattern.compile("\\b(song|songs|audio|video|videos|music|lyric|lyrics|official|full)\\b", Pattern.CASE_INSENSITIVE);
 
     private final List<Song> library = new ArrayList<>();
     private final Map<String, Song> externalSongsCache = new ConcurrentHashMap<>();
@@ -36,6 +43,11 @@ public class MusicService {
             this.cachedAt = cachedAt;
             this.results = results;
         }
+    }
+
+    @FunctionalInterface
+    private interface SongSearchProvider {
+        List<Song> search(String query, int limit);
     }
 
     public MusicService(JioSaavnService jioSaavnService, YouTubeService youTubeService) {
@@ -204,7 +216,7 @@ public class MusicService {
         List<Song> results = new ArrayList<>();
         if (query == null || query.isBlank()) return results;
 
-        int normalizedLimit = Math.max(1, Math.min(limit, 30));
+        int normalizedLimit = Math.max(1, Math.min(limit, 300));
         int providerLimit = Math.max(6, Math.min(normalizedLimit, SEARCH_PROVIDER_LIMIT_CAP));
         String normalizedQuery = query.trim();
         String searchKey = SEARCH_RESULT_VERSION + "#" + normalizedQuery.toLowerCase() + "#" + providerLimit;
@@ -216,23 +228,27 @@ public class MusicService {
         }
 
         CompletableFuture<List<Song>> jioFuture = CompletableFuture
-                .supplyAsync(() -> jioSaavnService.searchSongs(normalizedQuery, providerLimit))
+            .supplyAsync(() -> collectProviderResultsWithVariants(jioSaavnService::searchSongs, normalizedQuery, providerLimit))
             .completeOnTimeout(List.of(), SEARCH_JIO_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                 .exceptionally(e -> List.of());
 
         CompletableFuture<List<Song>> ytMusicFuture = CompletableFuture
-                .supplyAsync(() -> youTubeService.searchSongs(normalizedQuery, providerLimit))
+            .supplyAsync(() -> collectProviderResultsWithVariants(youTubeService::searchSongs, normalizedQuery, providerLimit))
             .completeOnTimeout(List.of(), SEARCH_YOUTUBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                 .exceptionally(e -> List.of());
 
         CompletableFuture<List<Song>> ytVideoFuture = CompletableFuture
-                .supplyAsync(() -> youTubeService.searchVideoContent(normalizedQuery, providerLimit))
+            .supplyAsync(() -> collectProviderResultsWithVariants(youTubeService::searchVideoContent, normalizedQuery, providerLimit))
             .completeOnTimeout(List.of(), SEARCH_YOUTUBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                 .exceptionally(e -> List.of());
 
         List<Song> jioResults = safeJoin(jioFuture);
         List<Song> ytResults = safeJoin(ytMusicFuture);
         List<Song> ytvResults = safeJoin(ytVideoFuture);
+
+        jioResults = rankByRelevance(normalizedQuery, jioResults);
+        ytResults = rankByRelevance(normalizedQuery, ytResults);
+        ytvResults = rankByRelevance(normalizedQuery, ytvResults);
 
         if (!ytResults.isEmpty() && !ytvResults.isEmpty()) {
             Set<String> videoIdsInYtv = new LinkedHashSet<>();
@@ -333,6 +349,154 @@ public class MusicService {
                 target.add(song);
             }
         }
+    }
+
+    private List<Song> collectProviderResultsWithVariants(SongSearchProvider provider,
+                                                          String query,
+                                                          int limit) {
+        if (provider == null || query == null || query.isBlank() || limit <= 0) {
+            return List.of();
+        }
+
+        List<String> variants = buildQueryVariants(query);
+        Map<String, Song> merged = new LinkedHashMap<>();
+
+        for (String variant : variants) {
+            List<Song> batch;
+            try {
+                batch = provider.search(variant, limit);
+            } catch (Exception e) {
+                continue;
+            }
+
+            if (batch == null || batch.isEmpty()) {
+                continue;
+            }
+
+            for (Song song : batch) {
+                if (song == null || song.getId() == null || song.getId().isBlank()) continue;
+                merged.putIfAbsent(song.getId(), song);
+                if (merged.size() >= limit) {
+                    return rankByRelevance(query, new ArrayList<>(merged.values()));
+                }
+            }
+        }
+
+        return rankByRelevance(query, new ArrayList<>(merged.values()));
+    }
+
+    private List<String> buildQueryVariants(String query) {
+        String trimmed = query == null ? "" : query.trim();
+        if (trimmed.isBlank()) {
+            return List.of();
+        }
+
+        LinkedHashSet<String> variants = new LinkedHashSet<>();
+        variants.add(trimmed);
+
+        String strippedNoise = SEARCH_NOISE_PATTERN.matcher(trimmed).replaceAll(" ").replaceAll("\\s+", " ").trim();
+        if (!strippedNoise.isBlank()) {
+            variants.add(strippedNoise);
+        }
+
+        String normalized = normalizeForMatch(trimmed);
+        if (!normalized.isBlank() && !normalized.equalsIgnoreCase(trimmed)) {
+            variants.add(normalized);
+        }
+
+        String[] words = strippedNoise.isBlank() ? trimmed.split("\\s+") : strippedNoise.split("\\s+");
+        if (words.length >= 2) {
+            variants.add(words[0] + " " + words[1]);
+        }
+        if (words.length >= 3) {
+            variants.add(words[0] + " " + words[1] + " " + words[2]);
+        }
+
+        return new ArrayList<>(variants);
+    }
+
+    private List<Song> rankByRelevance(String query, List<Song> songs) {
+        if (songs == null || songs.isEmpty()) {
+            return List.of();
+        }
+
+        String normalizedQuery = normalizeForMatch(query);
+        List<String> queryTokens = tokenize(normalizedQuery);
+
+        List<Song> ranked = new ArrayList<>(songs);
+        ranked.sort(Comparator.comparingInt((Song song) -> computeSearchScore(song, normalizedQuery, queryTokens)).reversed());
+        return ranked;
+    }
+
+    private int computeSearchScore(Song song, String normalizedQuery, List<String> queryTokens) {
+        if (song == null) return Integer.MIN_VALUE;
+
+        String title = normalizeForMatch(song.getTitle());
+        String artist = normalizeForMatch(song.getArtist());
+        String album = normalizeForMatch(song.getAlbum());
+        String full = (title + " " + artist + " " + album).trim();
+
+        int score = 0;
+
+        if (!normalizedQuery.isBlank()) {
+            if (title.equals(normalizedQuery)) {
+                score += 180;
+            } else if (title.contains(normalizedQuery)) {
+                score += 130;
+            } else if (full.contains(normalizedQuery)) {
+                score += 110;
+            }
+        }
+
+        Set<String> uniqueTokens = new HashSet<>(queryTokens);
+        for (String token : uniqueTokens) {
+            if (token.length() <= 1) continue;
+            if (title.contains(token)) {
+                score += 24;
+            } else if (artist.contains(token) || album.contains(token)) {
+                score += 12;
+            }
+        }
+
+        if (song.getId() != null) {
+            if (song.getId().startsWith("jio_")) {
+                score += 10;
+            } else if (song.getId().startsWith("yt_")) {
+                score += 8;
+            } else if (song.getId().startsWith("ytv_")) {
+                score += 4;
+            }
+        }
+
+        return score;
+    }
+
+    private List<String> tokenize(String normalizedText) {
+        if (normalizedText == null || normalizedText.isBlank()) {
+            return List.of();
+        }
+
+        List<String> tokens = new ArrayList<>();
+        for (String token : normalizedText.split("\\s+")) {
+            if (!token.isBlank()) {
+                tokens.add(token);
+            }
+        }
+        return tokens;
+    }
+
+    private String normalizeForMatch(String input) {
+        if (input == null || input.isBlank()) {
+            return "";
+        }
+
+        String normalized = Normalizer.normalize(input, Normalizer.Form.NFD)
+                .replaceAll("\\p{M}+", "")
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^\\p{L}\\p{N}\\s]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        return normalized;
     }
 
     private List<Song> synthesizeVideoResultsFromYouTubeMusic(List<Song> ytResults, int limit) {

@@ -1,4 +1,5 @@
 com\musicsync\service\JioSaavnService.class
+com\musicsync\service\MusicService$SongSearchProvider.class
 com\musicsync\controller\WebSocketController.class
 com\musicsync\service\MusicService.class
 com\musicsync\config\CorsConfig.class

@@ -38,6 +38,10 @@ public class YouTubeService {
     private static final Pattern HOUR_PATTERN = Pattern.compile("(\\d+)\\s*(?:h|hr|hrs|hour|hours)\\b");
     private static final Pattern MINUTE_PATTERN = Pattern.compile("(\\d+)\\s*(?:m|min|mins|minute|minutes)\\b");
     private static final Pattern SECOND_PATTERN = Pattern.compile("(\\d+)\\s*(?:s|sec|secs|second|seconds)\\b");
+    private static final Pattern YOUTUBE_API_KEY_PATTERN = Pattern.compile("^AIza[0-9A-Za-z_-]{20,}$");
+    private static final int MAX_SEARCH_LIMIT = 200;
+    private static final int API_PAGE_SIZE = 50;
+    private static final int API_MAX_PAGES = 4;
 
     @Value("${youtube.api-key:}")
     private String apiKey;
@@ -45,6 +49,8 @@ public class YouTubeService {
     private final RestTemplate restTemplate;
     private final JioSaavnService jioSaavnService;
     private final Map<String, String> fallbackAudioCache = new ConcurrentHashMap<>();
+    private volatile boolean apiKeyUsable = true;
+    private volatile boolean noKeyEndpointAvailable = true;
 
     public YouTubeService(JioSaavnService jioSaavnService) {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
@@ -60,14 +66,21 @@ public class YouTubeService {
     }
 
     public boolean isApiConfigured() {
-        return apiKey != null && !apiKey.isBlank();
+        return hasLikelyValidApiKey() && apiKeyUsable;
+    }
+
+    private boolean hasLikelyValidApiKey() {
+        if (apiKey == null || apiKey.isBlank()) {
+            return false;
+        }
+        return YOUTUBE_API_KEY_PATTERN.matcher(apiKey.trim()).matches();
     }
 
     public List<Song> searchSongs(String query, int limit) {
         List<Song> songs = new ArrayList<>();
         if (query == null || query.isBlank()) return songs;
 
-        int cappedLimit = Math.max(1, Math.min(limit, 50));
+        int cappedLimit = Math.max(1, Math.min(limit, MAX_SEARCH_LIMIT));
         String musicQuery = buildMusicQuery(query);
         Set<String> seenIds = new LinkedHashSet<>();
 
@@ -99,7 +112,7 @@ public class YouTubeService {
             }
         }
 
-        if (songs.size() < cappedLimit) {
+        if (songs.size() < cappedLimit && noKeyEndpointAvailable) {
             // Dedicated YouTube Music API path. Keep this as final fallback because DNS/network
             // failures on third-party hosts can block longer than regular YouTube web lookups.
             List<Song> musicApiSongs = searchSongsWithMusicApi(musicQuery, cappedLimit);
@@ -331,24 +344,38 @@ public class YouTubeService {
 
         try {
             String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
+            int pageSize = Math.min(API_PAGE_SIZE, Math.max(1, limit));
+            String nextPageToken = null;
+
+            for (int page = 0; page < API_MAX_PAGES && songs.size() < limit; page++) {
                 String url = YT_MUSIC_API_URL + "/search?part=snippet&type=video&videoCategoryId=10"
-                    + "&maxResults=" + limit + "&q=" + encodedQuery;
+                        + "&maxResults=" + pageSize + "&q=" + encodedQuery;
+                if (nextPageToken != null && !nextPageToken.isBlank()) {
+                    url += "&pageToken=" + URLEncoder.encode(nextPageToken, StandardCharsets.UTF_8);
+                }
 
-            String response = restTemplate.getForObject(url, String.class);
-            if (response == null || response.isBlank()) return songs;
+                String response = restTemplate.getForObject(url, String.class);
+                if (response == null || response.isBlank()) return songs;
 
-            JsonObject json = JsonParser.parseString(response).getAsJsonObject();
-            JsonArray items = json.has("items") ? json.getAsJsonArray("items") : null;
-            if (items == null) return songs;
+                JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+                JsonArray items = json.has("items") ? json.getAsJsonArray("items") : null;
+                if (items == null || items.isEmpty()) return songs;
 
-            for (int i = 0; i < items.size(); i++) {
-                JsonObject item = items.get(i).getAsJsonObject();
-                Song song = parseSearchItem(item);
-                if (song != null) {
-                    songs.add(song);
+                for (int i = 0; i < items.size() && songs.size() < limit; i++) {
+                    JsonObject item = items.get(i).getAsJsonObject();
+                    Song song = parseSearchItem(item);
+                    if (song != null) {
+                        songs.add(song);
+                    }
+                }
+
+                nextPageToken = getStringField(json, "nextPageToken");
+                if (nextPageToken == null || nextPageToken.isBlank()) {
+                    break;
                 }
             }
         } catch (Exception e) {
+            noKeyEndpointAvailable = false;
             log.warn("YouTube Music API search failed for query '{}': {}", query, e.getMessage());
         }
 
@@ -388,24 +415,40 @@ public class YouTubeService {
 
         try {
             String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
-            String url = API_URL + "/search?part=snippet&type=video&videoCategoryId=10&maxResults=" + limit
-                    + "&q=" + encodedQuery + "&key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
+            int pageSize = Math.min(API_PAGE_SIZE, Math.max(1, limit));
+            String nextPageToken = null;
 
-            String response = restTemplate.getForObject(url, String.class);
-            if (response == null) return songs;
+            for (int page = 0; page < API_MAX_PAGES && songs.size() < limit; page++) {
+                String url = API_URL + "/search?part=snippet&type=video&videoCategoryId=10&maxResults=" + pageSize
+                        + "&q=" + encodedQuery + "&key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
+                if (nextPageToken != null && !nextPageToken.isBlank()) {
+                    url += "&pageToken=" + URLEncoder.encode(nextPageToken, StandardCharsets.UTF_8);
+                }
 
-            JsonObject json = JsonParser.parseString(response).getAsJsonObject();
-            JsonArray items = json.has("items") ? json.getAsJsonArray("items") : null;
-            if (items == null) return songs;
+                String response = restTemplate.getForObject(url, String.class);
+                if (response == null) return songs;
 
-            for (int i = 0; i < items.size(); i++) {
-                JsonObject item = items.get(i).getAsJsonObject();
-                Song song = parseSearchItem(item);
-                if (song != null) {
-                    songs.add(song);
+                JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+                JsonArray items = json.has("items") ? json.getAsJsonArray("items") : null;
+                if (items == null || items.isEmpty()) return songs;
+
+                for (int i = 0; i < items.size() && songs.size() < limit; i++) {
+                    JsonObject item = items.get(i).getAsJsonObject();
+                    Song song = parseSearchItem(item);
+                    if (song != null) {
+                        songs.add(song);
+                    }
+                }
+
+                nextPageToken = getStringField(json, "nextPageToken");
+                if (nextPageToken == null || nextPageToken.isBlank()) {
+                    break;
                 }
             }
         } catch (Exception e) {
+            if (looksLikeInvalidApiKey(e)) {
+                apiKeyUsable = false;
+            }
             log.warn("YouTube Data API search failed for query '{}': {}", query, e.getMessage());
         }
 
@@ -994,7 +1037,7 @@ public class YouTubeService {
         List<Song> songs = new ArrayList<>();
         if (query == null || query.isBlank()) return songs;
 
-        int cappedLimit = Math.max(1, Math.min(limit, 50));
+        int cappedLimit = Math.max(1, Math.min(limit, MAX_SEARCH_LIMIT));
         Set<String> seenIds = new LinkedHashSet<>();
 
         if (isApiConfigured()) {
@@ -1018,23 +1061,48 @@ public class YouTubeService {
         List<Song> songs = new ArrayList<>();
         try {
             String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
-            String url = API_URL + "/search?part=snippet&type=video&maxResults=" + limit
-                    + "&videoEmbeddable=true&videoSyndicated=true"
-                    + "&q=" + encodedQuery + "&key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
-            String response = restTemplate.getForObject(url, String.class);
-            if (response == null) return songs;
-            JsonObject json = JsonParser.parseString(response).getAsJsonObject();
-            JsonArray items = json.has("items") ? json.getAsJsonArray("items") : null;
-            if (items == null) return songs;
-            for (int i = 0; i < items.size(); i++) {
-                JsonObject item = items.get(i).getAsJsonObject();
-                Song song = parseVideoContentSearchItem(item);
-                if (song != null) songs.add(song);
+            int pageSize = Math.min(API_PAGE_SIZE, Math.max(1, limit));
+            String nextPageToken = null;
+
+            for (int page = 0; page < API_MAX_PAGES && songs.size() < limit; page++) {
+                String url = API_URL + "/search?part=snippet&type=video&maxResults=" + pageSize
+                        + "&videoEmbeddable=true&videoSyndicated=true"
+                        + "&q=" + encodedQuery + "&key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
+                if (nextPageToken != null && !nextPageToken.isBlank()) {
+                    url += "&pageToken=" + URLEncoder.encode(nextPageToken, StandardCharsets.UTF_8);
+                }
+
+                String response = restTemplate.getForObject(url, String.class);
+                if (response == null) return songs;
+                JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+                JsonArray items = json.has("items") ? json.getAsJsonArray("items") : null;
+                if (items == null || items.isEmpty()) return songs;
+                for (int i = 0; i < items.size() && songs.size() < limit; i++) {
+                    JsonObject item = items.get(i).getAsJsonObject();
+                    Song song = parseVideoContentSearchItem(item);
+                    if (song != null) songs.add(song);
+                }
+
+                nextPageToken = getStringField(json, "nextPageToken");
+                if (nextPageToken == null || nextPageToken.isBlank()) {
+                    break;
+                }
             }
         } catch (Exception e) {
+            if (looksLikeInvalidApiKey(e)) {
+                apiKeyUsable = false;
+            }
             log.warn("YouTube Data API video content search failed for query '{}': {}", query, e.getMessage());
         }
         return songs;
+    }
+
+    private boolean looksLikeInvalidApiKey(Exception e) {
+        if (e == null || e.getMessage() == null) {
+            return false;
+        }
+        String message = e.getMessage().toLowerCase();
+        return message.contains("api key not valid") || message.contains("api_key_invalid");
     }
 
     private List<Song> searchVideoContentFromWeb(String query, int limit) {
