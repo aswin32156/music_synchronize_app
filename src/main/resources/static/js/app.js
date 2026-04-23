@@ -164,8 +164,7 @@ function startYtVideoSafetyCheck() {
     if (ytVideoSafetyCheckInterval) clearInterval(ytVideoSafetyCheckInterval);
     if (ytForcePlayInterval) clearInterval(ytForcePlayInterval);
     
-    // Monitor to ensure video keeps playing if server says it should be playing
-    // and user didn't explicitly pause it
+    // ULTRA-AGGRESSIVE monitor - check EVERY 100ms to catch ANY pause
     ytForcePlayInterval = setInterval(() => {
         if (!currentRoom || !ytPlayer || !window.YT) return;
         
@@ -177,25 +176,21 @@ function startYtVideoSafetyCheck() {
         const serverSaysPlaying = !!(currentRoom.playbackState && currentRoom.playbackState.playing);
         const userDidntPause = !hasRecentYtUserPauseIntent();
         
-        // Only maintain play if: video song, server says play, and user didn't explicitly pause
-        const shouldStayPlaying = isVideoSong && serverSaysPlaying && userDidntPause;
-        
-        if (!shouldStayPlaying) return;
+        // If server says play AND user didn't pause AND it's a video
+        if (!serverSaysPlaying || !userDidntPause || !isVideoSong) return;
         
         try {
             const state = ytPlayer.getPlayerState();
-            // If video SHOULD be playing and it's paused (not buffering/playing)
-            if (state !== YT.PlayerState.PLAYING && state !== YT.PlayerState.BUFFERING) {
-                console.log('[YouTube] User did not pause but video stopped - resuming from state:', state);
-                suppressYtStateSync(1500);
+            // If paused, RESUME IMMEDIATELY
+            if (state === YT.PlayerState.PAUSED || state === YT.PlayerState.UNSTARTED || state === 5) {
+                console.log('[YouTube SAFETY] Detected unwanted pause (state ' + state + ') - RESUMING NOW!');
+                suppressYtStateSync(2000);
                 ytPlayer.playVideo();
-                setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 30);
-                setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 80);
             }
         } catch (err) {
-            console.warn('[YouTube] Could not check/resume video:', err);
+            // Continue anyway
         }
-    }, 1000); // Check every 1 second
+    }, 100); // Check every 100ms - extremely aggressive
 }
 
 function stopYtVideoSafetyCheck() {
@@ -948,10 +943,10 @@ let ytLastQualityChangeAt = 0;
 let ytControlsHideTimeout = null;
 let ytControlsBehaviorBound = false;
 let ytLastBackgroundAt = 0;
-const YT_BACKGROUND_PAUSE_GRACE_MS = 15000; // Extended to 15s - very generous window for slow mobile transitions
-const YT_FORCE_PLAY_CHECK_MS = 200; // Check every 200ms (AGGRESSIVE) to catch pauses immediately
+const YT_BACKGROUND_PAUSE_GRACE_MS = 15000; 
+const YT_FORCE_PLAY_CHECK_MS = 100; // Check every 100ms
 let ytUserPauseRequestedUntil = 0;
-const YT_USER_PAUSE_INTENT_WINDOW_MS = 3500;
+const YT_USER_PAUSE_INTENT_WINDOW_MS = 5000; // 5 second window for user pause intent
 
 function clearYtControlsHideTimeout() {
     if (ytControlsHideTimeout) {
@@ -1214,26 +1209,28 @@ function maybeResumeYtAfterForeground() {
     
     const userDidntPause = !hasRecentYtUserPauseIntent();
 
-    // Only resume if: server says play AND user didn't explicitly pause
-    if (!serverSaysPlaying || !userDidntPause || typeof ytPlayer.getPlayerState !== 'function') {
+    // If server says play AND user didn't pause, ALWAYS resume
+    if (!serverSaysPlaying || !userDidntPause) {
         return;
     }
 
     try {
         const state = ytPlayer.getPlayerState();
-        // Only resume if video is paused but should be playing
         if (state !== YT.PlayerState.PLAYING && state !== YT.PlayerState.BUFFERING) {
-            console.log('[YouTube] App returned to foreground - resuming (user did not pause)');
-            suppressYtStateSync(1500);
+            console.log('[YouTube FOREGROUND] App returned - server says play, user didnt pause - RESUMING!');
+            suppressYtStateSync(2000);
             
+            // AGGRESSIVE playback calls
             ytPlayer.playVideo();
-            setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 30);
-            setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 80);
+            setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 20);
+            setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 50);
+            setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 100);
             
-            scheduleRoomStateRefresh(300);
+            scheduleRoomStateRefresh(200);
         }
     } catch (err) {
-        console.warn('[YouTube] Could not check foreground state:', err);
+        // Try to resume anyway
+        try { ytPlayer.playVideo(); } catch (e) {}
     }
 }
 
@@ -1378,50 +1375,57 @@ function _createYtPlayer(videoId, startTime, autoplay) {
                         && currentRoom.playbackState.playing
                     );
                     const hasUserPauseIntent = hasRecentYtUserPauseIntent();
-                    
-                    // Check if in Picture-in-Picture mode (floating window)
                     const isInPictureInPicture = !!(document.pictureInPictureElement);
+                    const isAppVisible = document.visibilityState === 'visible';
                     
-                    // Check if app went to background (not visible)
-                    const isAppInBackground = document.visibilityState === 'hidden';
+                    console.log('[YouTube PAUSE] User intent:', hasUserPauseIntent, 'Server playing:', serverSaysPlaying, 'PIP:', isInPictureInPicture, 'Visible:', isAppVisible);
 
-                    // ONLY process pause if:
-                    // 1. User explicitly clicked pause, OR
-                    // 2. Server says should be paused (room host paused it)
-                    // OTHERWISE: ignore system/background pauses and resume
-                    
-                    if (!hasUserPauseIntent && serverSaysPlaying && !isInPictureInPicture) {
-                        // System pause detected (not user-initiated) - IGNORE IT and resume immediately
-                        console.log('[YouTube] System pause detected (not user intent) - IGNORING and RESUMING');
-                        suppressYtStateSync(2000);
+                    // === RULE 1: If user did NOT explicitly pause AND server says PLAY ===
+                    // MUST RESUME IMMEDIATELY - this covers:
+                    // - App background (system pause)
+                    // - Browser pause on tab hide
+                    // - Any other automatic pause
+                    if (!hasUserPauseIntent && serverSaysPlaying) {
+                        console.log('[YouTube] ⚠️  SYSTEM PAUSE DETECTED - EMERGENCY RESUME!');
+                        suppressYtStateSync(3000);
                         try {
                             if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
-                                // Force resume multiple times
-                                ytPlayer.playVideo();
-                                setImmediate(() => { try { ytPlayer.playVideo(); } catch(e) {} });
-                                setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 30);
-                                setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 80);
+                                // ULTRA AGGRESSIVE - call play 6+ times
+                                for (let i = 0; i < 6; i++) {
+                                    ytPlayer.playVideo();
+                                    setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, i * 20);
+                                }
                             }
                         } catch (err) {
-                            console.warn('[YouTube] Failed to resume:', err);
+                            console.warn('[YouTube] Resume failed:', err);
                         }
-                        return;
+                        return; // EXIT - do NOT process pause further
                     }
 
-                    // User explicitly paused OR server says pause OR in picture-in-picture
-                    // Only update UI and sync if it was truly user-initiated pause
-                    if (hasUserPauseIntent || !serverSaysPlaying) {
+                    // === RULE 2: Only pause if user explicitly clicked pause ===
+                    if (hasUserPauseIntent) {
+                        console.log('[YouTube] User pause accepted');
                         isPlaying = false;
                         updatePlayPauseIcon();
                         stopProgressTimer();
                         document.getElementById('sound-waves').classList.remove('active');
 
-                        // Sync user pause to room
-                        if (shouldSyncVideoState && !stateSyncSuppressed && wasPlaying && hasUserPauseIntent) {
+                        // Sync pause to room
+                        if (shouldSyncVideoState && !stateSyncSuppressed && wasPlaying) {
                             let videoTime = 0;
                             try { videoTime = e.target.getCurrentTime() || 0; } catch (err) {}
                             sendPlaybackCommand('pause', videoTime);
                         }
+                        return;
+                    }
+
+                    // === RULE 3: If we reach here, server says PAUSE - respect it ===
+                    if (!serverSaysPlaying) {
+                        console.log('[YouTube] Server commanded pause');
+                        isPlaying = false;
+                        updatePlayPauseIcon();
+                        stopProgressTimer();
+                        document.getElementById('sound-waves').classList.remove('active');
                     }
                 }
             },
