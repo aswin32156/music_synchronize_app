@@ -179,19 +179,22 @@ function startYtVideoSafetyCheck() {
         
         try {
             const state = ytPlayer.getPlayerState();
-            // If video should be playing but ISN'T, force it to play IMMEDIATELY
+            // If video should be playing but ISN'T, force it to play IMMEDIATELY with multiple calls
             if (state !== YT.PlayerState.PLAYING && state !== YT.PlayerState.BUFFERING) {
-                console.log('[YouTube Force-Play] Paused detected (state ' + state + ') - FORCING RESUME');
-                suppressYtStateSync(1500);
+                console.log('[YouTube Force-Play] Paused detected (state ' + state + ') - FORCING RESUME with multiple calls');
+                suppressYtStateSync(2000);
                 ytPlayer.playVideo();
+                setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 20);
+                setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 50);
+                setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 100);
             }
         } catch (err) {
             // Try playing even on error
             try { ytPlayer.playVideo(); } catch (e) {}
         }
-    }, YT_FORCE_PLAY_CHECK_MS); // Check every 400ms to catch pauses immediately
+    }, YT_FORCE_PLAY_CHECK_MS); // Check every 200ms to catch pauses immediately
     
-    // Additional fallback check every 3 seconds for resilience
+    // Additional fallback check every 2 seconds for resilience
     ytVideoSafetyCheckInterval = setInterval(() => {
         if (!currentRoom || !ytPlayer || !window.YT || !document.visibilityState) return;
         
@@ -207,12 +210,14 @@ function startYtVideoSafetyCheck() {
         try {
             const state = ytPlayer.getPlayerState();
             if (state !== YT.PlayerState.PLAYING && state !== YT.PlayerState.BUFFERING) {
-                console.log('[YouTube Fallback Check] Paused (state ' + state + ') - forcing play');
-                suppressYtStateSync(1200);
+                console.log('[YouTube Fallback Check] Paused (state ' + state + ') - forcing play with multiple calls');
+                suppressYtStateSync(1500);
                 ytPlayer.playVideo();
+                setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 30);
+                setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 80);
             }
         } catch (err) {}
-    }, 3000);
+    }, 2000); // More frequent fallback check
 }
 
 function stopYtVideoSafetyCheck() {
@@ -965,8 +970,8 @@ let ytLastQualityChangeAt = 0;
 let ytControlsHideTimeout = null;
 let ytControlsBehaviorBound = false;
 let ytLastBackgroundAt = 0;
-const YT_BACKGROUND_PAUSE_GRACE_MS = 12000; // Extended to 12s - very generous window for slow mobile transitions
-const YT_FORCE_PLAY_CHECK_MS = 400; // Check every 400ms to catch pauses immediately
+const YT_BACKGROUND_PAUSE_GRACE_MS = 15000; // Extended to 15s - very generous window for slow mobile transitions
+const YT_FORCE_PLAY_CHECK_MS = 200; // Check every 200ms (AGGRESSIVE) to catch pauses immediately
 let ytUserPauseRequestedUntil = 0;
 const YT_USER_PAUSE_INTENT_WINDOW_MS = 3500;
 
@@ -1237,13 +1242,16 @@ function maybeResumeYtAfterForeground() {
         const state = ytPlayer.getPlayerState();
         // ALWAYS resume immediately if video should be playing but isn't
         if (state !== YT.PlayerState.PLAYING && state !== YT.PlayerState.BUFFERING) {
-            suppressYtStateSync(2000); // Suppress state sync to prevent false reporting
+            suppressYtStateSync(3000); // Suppress state sync to prevent false reporting
             console.log('[YouTube Foreground] App came to foreground - resuming from state:', state);
             
-            // Multiple calls to ensure it sticks
+            // AGGRESSIVE multiple calls to ensure it sticks
             ytPlayer.playVideo();
+            setImmediate(() => { try { ytPlayer.playVideo(); } catch(e) {} });
+            setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 20);
             setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 50);
             setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 100);
+            setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 200);
             
             scheduleRoomStateRefresh(300);
         }
@@ -1412,16 +1420,19 @@ function _createYtPlayer(videoId, startTime, autoplay) {
                     if (ignoreAsBackgroundPause || ignoreAsUnexpectedSystemPause) {
                         // Mobile browsers may force-pause iframe video when app/tab goes to background.
                         // IMMEDIATELY resume - no delays, no flags, no conditions.
-                        console.log('[YouTube] Background pause detected - IMMEDIATE RESUME');
+                        console.log('[YouTube] Background pause detected - IMMEDIATE AGGRESSIVE RESUME');
                         
-                        suppressYtStateSync(2000); // Suppress state sync to prevent any false reports
+                        suppressYtStateSync(3000); // Suppress state sync to prevent any false reports
                         try {
                             if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
-                                // Call playVideo multiple times to ensure it sticks
+                                // Call playVideo MANY times to ensure it sticks on stubborn mobile browsers
                                 ytPlayer.playVideo();
-                                setTimeout(() => { if (ytPlayer && typeof ytPlayer.playVideo === 'function') ytPlayer.playVideo(); }, 50);
-                                setTimeout(() => { if (ytPlayer && typeof ytPlayer.playVideo === 'function') ytPlayer.playVideo(); }, 100);
-                                console.log('[YouTube] Video auto-resumed with redundant calls');
+                                setImmediate(() => { try { ytPlayer.playVideo(); } catch(e) {} });
+                                setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 20);
+                                setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 50);
+                                setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 100);
+                                setTimeout(() => { try { ytPlayer.playVideo(); } catch(e) {} }, 200);
+                                console.log('[YouTube] Video auto-resumed with AGGRESSIVE multiple calls');
                             }
                         } catch (err) {
                             console.warn('[YouTube] Failed to auto-resume video:', err);
